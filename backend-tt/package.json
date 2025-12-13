@@ -1,12 +1,14 @@
 {
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "connect-pg-simple": "^9.0.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-session": "^1.18.2",
     "express-validator": "^7.3.1",
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
+    "pg-simple": "^0.2.2",
     "sequelize": "^6.37.7"
   }
 }

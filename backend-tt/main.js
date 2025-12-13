@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const { Sequelize, DataTypes } = require('sequelize');
+const { Pool } = require('pg');
+const connectPgSimple = require('connect-pg-simple');
 const authRouter = require('./auth');
 
 const {
@@ -14,6 +16,9 @@ const sequelize = new Sequelize(DATABASE_URL, {
   dialect: 'postgres',
   logging: false,
 });
+
+const pool = new Pool({ connectionString: DATABASE_URL });
+const PgStore = connectPgSimple(session);
 
 const Tasks = sequelize.define('Task', {
   id: {
@@ -58,8 +63,30 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  store: new PgStore({
+    pool,
+    tableName: 'session',
+    createTableIfMissing: true,
+  }),
+  cookie: {
+    httpOnly: true,
+    sameSite: false, // позволяем отправлять cookie на POST/PUT из Postman/браузера
+    secure: false,   // для http на локали
+  },
 }));
+app.locals.db = pool;
 app.use(authRouter); // /register, /login, /change-password, /logout
+
+// отладка сессии
+app.use((req, res, next) => {
+  console.log(
+    `${req.method} ${req.path}`,
+    'cookie:', req.headers.cookie || '-',
+    'sessionId:', req.sessionID,
+    'userId:', req.session?.userId || '-'
+  );
+  next();
+});
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) {
@@ -145,6 +172,15 @@ app.get('/', requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// отладка сессии
+app.get('/whoami', (req, res) => {
+  res.json({
+    sessionId: req.sessionID,
+    session: req.session,
+    cookies: req.headers.cookie || null,
+  });
+});
 // удаление задачи по id
 app.delete('/tasks/:id', requireAuth, async (req, res) => {
   try {
@@ -161,6 +197,14 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
 });
 
 sequelize.authenticate()
+  .then(() => pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(50) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `))
   .then(() => sequelize.sync({ alter: true }))
   .then(() => {
     app.listen(PORT, () => {
