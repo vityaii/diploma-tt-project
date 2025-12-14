@@ -3,6 +3,7 @@ type Props = {
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
   onToggleFilters: () => void;
+  onAddColumn: () => void;
   onNewTask: () => void;
 };
 
@@ -11,6 +12,7 @@ export function BoardHeader({
   searchQuery,
   onSearchQueryChange,
   onToggleFilters,
+  onAddColumn,
   onNewTask,
 }: Props) {
   return (
@@ -52,6 +54,20 @@ export function BoardHeader({
             />
           </svg>
           Filters
+        </button>
+
+        <button
+          type="button"
+          onClick={onAddColumn}
+          className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-neutral-500">
+            <path
+              fill="currentColor"
+              d="M3 5h18v4H3zm0 6h18v8H3zm2 2v4h14v-4z"
+            />
+          </svg>
+          Add column
         </button>
 
         <button

@@ -60,12 +60,29 @@ export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
 
   return (
     <div className="min-h-screen bg-neutral-100">
-      <div className="mx-auto max-w-[1400px] px-6 py-8">
+      <div className="mx-auto flex min-h-screen max-w-[1400px] flex-col px-6 py-8">
         <BoardHeader
           title="My Project"
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
           onToggleFilters={() => setFiltersOpen((v) => !v)}
+          onAddColumn={() => {
+            const title = window.prompt("Column title");
+            if (!title) return;
+
+            const baseId = title
+              .trim()
+              .toLowerCase()
+              .replace(/\s+/g, "-")
+              .replace(/[^a-z0-9-]/g, "");
+            const rand = Math.random().toString(16).slice(2, 8);
+            const id = baseId ? `${baseId}-${rand}` : `col-${rand}`;
+
+            onBoardChange((prev) => ({
+              ...prev,
+              columns: [...prev.columns, { id, title: title.trim(), cardIds: [] }],
+            }));
+          }}
           onNewTask={() => onOpenTask?.("new")}
         />
 
@@ -177,8 +194,8 @@ export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
             setActiveCardId(null);
           }}
         >
-          <div className="mt-6 rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
-            <div className="flex gap-4 overflow-x-auto pb-3">
+          <div className="mt-6 flex min-h-0 flex-1 flex-col rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <div className="flex min-h-0 flex-1 items-stretch gap-4">
               {board.columns.map((col) => {
                 const cards = col.cardIds
                   .map((id) => cardsById[id])
@@ -189,34 +206,9 @@ export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
                     column={col}
                     cards={cards}
                     onOpenCard={(id) => onOpenTask?.(id)}
-                    onCreateTask={(_columnId) => onOpenTask?.("new")}
                   />
                 );
               })}
-
-              <button
-                type="button"
-                onClick={() => {
-                  const title = window.prompt("Column title");
-                  if (!title) return;
-
-                  const baseId = title
-                    .trim()
-                    .toLowerCase()
-                    .replace(/\s+/g, "-")
-                    .replace(/[^a-z0-9-]/g, "");
-                  const rand = Math.random().toString(16).slice(2, 8);
-                  const id = baseId ? `${baseId}-${rand}` : `col-${rand}`;
-
-                  onBoardChange((prev) => ({
-                    ...prev,
-                    columns: [...prev.columns, { id, title: title.trim(), cardIds: [] }],
-                  }));
-                }}
-                className="w-[320px] shrink-0 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 text-sm font-medium text-neutral-700 shadow-sm hover:bg-neutral-100 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
-              >
-                + Add column
-              </button>
             </div>
           </div>
 
