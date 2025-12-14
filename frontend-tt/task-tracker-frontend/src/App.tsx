@@ -3,6 +3,7 @@ import { KanbanPage } from "./pages/kanban/KanbanPage";
 import { boardMock } from "./pages/kanban/kanban.mock";
 import type { KanbanBoard, KanbanCard, Priority } from "./pages/kanban/kanban.types";
 import { TaskPage } from "./pages/task/TaskPage";
+import { ttApi } from "./api/ttApi";
 
 function makeInitials(name: string) {
   const parts = name
@@ -21,21 +22,11 @@ function createId() {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-function getInitialNextTaskNumber() {
-  const fromMock = Math.max(
-    0,
-    ...Object.values(boardMock.cards).map((c) => (typeof c.taskNumber === "number" ? c.taskNumber : 0)),
+function getFallbackNextTaskNumber() {
+  return (
+    Math.max(0, ...Object.values(boardMock.cards).map((c) => (typeof c.taskNumber === "number" ? c.taskNumber : 0))) +
+    1
   );
-  const fallback = fromMock + 1;
-
-  try {
-    const raw = window.localStorage.getItem("tt.nextTaskNumber");
-    const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-    if (Number.isFinite(parsed) && parsed > 0) return Math.max(parsed, fallback);
-  } catch {
-    // ignore
-  }
-  return fallback;
 }
 
 function setHash(hash: string) {
@@ -62,17 +53,50 @@ export default function App() {
     columns: boardMock.columns.map((c) => ({ ...c, cardIds: [...c.cardIds] })),
     cards: { ...boardMock.cards },
   }));
-  const [nextTaskNumber, setNextTaskNumber] = useState(() => getInitialNextTaskNumber());
+  const [nextTaskNumber, setNextTaskNumber] = useState(() => getFallbackNextTaskNumber());
   const nextTaskNumberRef = useRef(nextTaskNumber);
+  const [hydrated, setHydrated] = useState(false);
+  const persistTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     nextTaskNumberRef.current = nextTaskNumber;
-    try {
-      window.localStorage.setItem("tt.nextTaskNumber", String(nextTaskNumber));
-    } catch {
-      // ignore
-    }
   }, [nextTaskNumber]);
+
+  useEffect(() => {
+    let canceled = false;
+    ttApi
+      .getBoard()
+      .then(({ board: remoteBoard, nextTaskNumber: remoteNext }) => {
+        if (canceled) return;
+        setBoard(remoteBoard);
+        setNextTaskNumber(remoteNext);
+      })
+      .catch((err) => {
+        console.error("Failed to load board from backend:", err);
+      })
+      .finally(() => {
+        if (canceled) return;
+        setHydrated(true);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = window.setTimeout(() => {
+      ttApi
+        .putBoard({ board, nextTaskNumber })
+        .catch((err) => console.error("Failed to save board to backend:", err));
+    }, 250);
+
+    return () => {
+      if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
+    };
+  }, [board, hydrated, nextTaskNumber]);
 
   const saveTask = useMemo(() => {
     type Draft = {

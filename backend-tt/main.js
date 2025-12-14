@@ -14,6 +14,35 @@ const {
 const sequelizeCache = new Map();
 
 function defineModels(sequelizeInstance) {
+  const BoardState = sequelizeInstance.models.BoardState || sequelizeInstance.define('BoardState', {
+    id: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      primaryKey: true,
+    },
+    board: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+    },
+    next_task_number: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+    },
+  }, {
+    tableName: 'board_state',
+    timestamps: false,
+  });
+
   const Column = sequelizeInstance.models.Column || sequelizeInstance.define('Column', {
     id: {
       type: DataTypes.INTEGER,
@@ -89,19 +118,90 @@ function defineModels(sequelizeInstance) {
   Column.hasMany(Task, { foreignKey: 'column_id' });
   Task.belongsTo(Column, { foreignKey: 'column_id' });
 
-  return { Task, Column };
+  return { Task, Column, BoardState };
 }
 
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
 app.use(session({
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
 }));
 app.use(authRouter); // /register, /login, /change-password, /logout
+
+function defaultBoardState() {
+  return {
+    columns: [
+      { id: 'todo', title: 'To Do', cardIds: [] },
+      { id: 'inprogress', title: 'In Progress', cardIds: [] },
+      { id: 'review', title: 'Review', cardIds: [] },
+      { id: 'done', title: 'Done', cardIds: [] },
+    ],
+    cards: {},
+  };
+}
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+app.get('/api/board', async (req, res) => {
+  try {
+    const sequelize = getBaseSequelize();
+    const { BoardState } = sequelize.models;
+    const state = await BoardState.findByPk(1);
+    if (!state) {
+      const created = await BoardState.create({
+        id: 1,
+        board: defaultBoardState(),
+        next_task_number: 1,
+      });
+      return res.json({ board: created.board, nextTaskNumber: created.next_task_number });
+    }
+    res.json({ board: state.board, nextTaskNumber: state.next_task_number });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/board', async (req, res) => {
+  const { board, nextTaskNumber } = req.body || {};
+  if (!board || typeof board !== 'object') {
+    return res.status(400).json({ error: 'Missing board' });
+  }
+  if (!Number.isFinite(Number(nextTaskNumber)) || Number(nextTaskNumber) < 1) {
+    return res.status(400).json({ error: 'Invalid nextTaskNumber' });
+  }
+  if (!Array.isArray(board.columns) || typeof board.cards !== 'object' || board.cards === null) {
+    return res.status(400).json({ error: 'Invalid board shape' });
+  }
+
+  try {
+    const sequelize = getBaseSequelize();
+    const { BoardState } = sequelize.models;
+    await BoardState.upsert({
+      id: 1,
+      board,
+      next_task_number: Number(nextTaskNumber),
+      updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 function requireAuth(req, res, next) {
   if (!req.session.userId) {
@@ -452,18 +552,20 @@ async function backfillColumns(baseSequelize) {
 
 async function bootstrap() {
   const baseSequelize = getBaseSequelize();
-  const { Task, Column } = baseSequelize.models;
+  const { Task, Column, BoardState } = baseSequelize.models;
 
   // If an admin connection string is provided, use it for DDL only.
   if (!databaseUrlAdmin || databaseUrlAdmin === databaseUrlApp) {
     await Column.sync({ alter: true });
     await Task.sync({ alter: true });
+    await BoardState.sync({ alter: true });
   } else {
     const adminSequelize = new Sequelize(databaseUrlAdmin, { dialect: 'postgres', logging: false });
     const adminModels = defineModels(adminSequelize);
     await adminSequelize.authenticate();
     await adminModels.Column.sync({ alter: true });
     await adminModels.Task.sync({ alter: true });
+    await adminModels.BoardState.sync({ alter: true });
     await adminSequelize.close();
   }
 
