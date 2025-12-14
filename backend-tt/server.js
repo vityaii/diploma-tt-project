@@ -71,34 +71,60 @@ async function ensureSchema() {
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name VARCHAR(100) NOT NULL,
+      client_id TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       UNIQUE(user_id, id)
     );
   `);
+  await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`);
+  await ddlPool.query(`DROP INDEX IF EXISTS columns_user_id_name_idx;`);
   await ddlPool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS columns_user_id_name_idx
-    ON columns(user_id, name);
+    CREATE UNIQUE INDEX IF NOT EXISTS columns_user_id_client_id_idx
+    ON columns(user_id, client_id)
+    WHERE client_id IS NOT NULL;
   `);
   await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS tasks (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title VARCHAR(100) NOT NULL,
-      text VARCHAR(100) NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
       stat VARCHAR(100) NOT NULL,
       priority VARCHAR(50) NOT NULL DEFAULT 'normal',
       column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL,
+      client_id TEXT,
+      task_number INTEGER,
+      customer_name TEXT,
+      assignee_name TEXT,
+      assignee_initials TEXT,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      position INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       UNIQUE(user_id, id)
     );
   `);
+  await ddlPool.query(`ALTER TABLE tasks ALTER COLUMN text TYPE TEXT;`);
+  await ddlPool.query(`ALTER TABLE tasks ALTER COLUMN text SET DEFAULT '';`);
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number INTEGER;`);
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT;`);
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_name TEXT;`);
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_initials TEXT;`);
+  await ddlPool.query(
+    `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;`,
+  );
+  await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`);
   await ddlPool.query(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS priority VARCHAR(50) NOT NULL DEFAULT 'normal';
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_user_id_client_id_idx
+    ON tasks(user_id, client_id)
+    WHERE client_id IS NOT NULL;
   `);
   await ddlPool.query(`
-    ALTER TABLE tasks
-    ADD COLUMN IF NOT EXISTS column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_user_id_task_number_idx
+    ON tasks(user_id, task_number)
+    WHERE task_number IS NOT NULL;
   `);
 
   await ddlPool.query(`

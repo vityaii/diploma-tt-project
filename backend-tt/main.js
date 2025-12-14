@@ -14,6 +14,31 @@ const {
 const sequelizeCache = new Map();
 
 function defineModels(sequelizeInstance) {
+  const User = sequelizeInstance.models.User || sequelizeInstance.define('User', {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+    username: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+    },
+    password_hash: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+    },
+  }, {
+    tableName: 'users',
+    timestamps: false,
+  });
+
   const BoardState = sequelizeInstance.models.BoardState || sequelizeInstance.define('BoardState', {
     id: {
       type: DataTypes.INTEGER,
@@ -58,6 +83,15 @@ function defineModels(sequelizeInstance) {
       type: DataTypes.STRING,
       allowNull: false,
     },
+    client_id: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    position: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
     created_at: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -66,9 +100,6 @@ function defineModels(sequelizeInstance) {
   }, {
     tableName: 'columns',
     timestamps: false,
-    indexes: [
-      { unique: true, fields: ['user_id', 'name'] },
-    ],
   });
 
   const Task = sequelizeInstance.models.Task || sequelizeInstance.define('Task', {
@@ -87,7 +118,7 @@ function defineModels(sequelizeInstance) {
       allowNull: false,
     },
     text: { // содержимое таски
-      type: DataTypes.STRING,
+      type: DataTypes.TEXT,
       allowNull: false,
       defaultValue: '',
     },
@@ -105,6 +136,36 @@ function defineModels(sequelizeInstance) {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    client_id: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    task_number: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    customer_name: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    assignee_name: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    assignee_initials: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    tags: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: [],
+    },
+    position: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
     created_at: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -118,7 +179,7 @@ function defineModels(sequelizeInstance) {
   Column.hasMany(Task, { foreignKey: 'column_id' });
   Task.belongsTo(Column, { foreignKey: 'column_id' });
 
-  return { Task, Column, BoardState };
+  return { Task, Column, BoardState, User };
 }
 
 const app = express();
@@ -141,6 +202,177 @@ app.use(session({
 }));
 app.use(authRouter); // /register, /login, /change-password, /logout
 
+let cachedApiUserId = null;
+
+async function getOrCreateApiUserId(sequelize) {
+  if (cachedApiUserId) return cachedApiUserId;
+  const { User } = sequelize.models;
+  let user = await User.findOne({ order: [['id', 'ASC']] });
+  if (user) {
+    cachedApiUserId = user.id;
+    return cachedApiUserId;
+  }
+
+  const suffix = Math.random().toString(16).slice(2, 8);
+  user = await User.create({
+    username: `demo_${suffix}`,
+    password_hash: `demo_${suffix}`,
+  });
+  cachedApiUserId = user.id;
+  return cachedApiUserId;
+}
+
+async function syncBoardToTables(sequelize, board) {
+  const { Column, Task } = sequelize.models;
+  const userId = await getOrCreateApiUserId(sequelize);
+
+  const columnOrder = Array.isArray(board.columns) ? board.columns : [];
+  const cards = board.cards && typeof board.cards === 'object' ? board.cards : {};
+
+  const columnIdToDb = new Map();
+  const desiredColumnClientIds = [];
+
+  await sequelize.transaction(async (t) => {
+    for (let i = 0; i < columnOrder.length; i += 1) {
+      const col = columnOrder[i];
+      if (!col || typeof col !== 'object') continue;
+      const clientId = String(col.id ?? '').trim();
+      const title = String(col.title ?? '').trim();
+      if (!clientId || !title) continue;
+
+      desiredColumnClientIds.push(clientId);
+      let dbCol = await Column.findOne({ where: { user_id: userId, client_id: clientId }, transaction: t });
+      if (!dbCol) {
+        dbCol = await Column.create(
+          { user_id: userId, client_id: clientId, name: title, position: i },
+          { transaction: t },
+        );
+      } else {
+        await dbCol.update({ name: title, position: i }, { transaction: t });
+      }
+      columnIdToDb.set(clientId, dbCol);
+    }
+
+    const cardIdToPlacement = new Map(); // client_id -> { columnClientId, position }
+    for (const col of columnOrder) {
+      if (!col || typeof col !== 'object') continue;
+      const colClientId = String(col.id ?? '').trim();
+      const cardIds = Array.isArray(col.cardIds) ? col.cardIds : [];
+      for (let pos = 0; pos < cardIds.length; pos += 1) {
+        const cardClientId = String(cardIds[pos] ?? '').trim();
+        if (!cardClientId) continue;
+        cardIdToPlacement.set(cardClientId, { columnClientId: colClientId, position: pos });
+      }
+    }
+
+    const desiredTaskClientIds = Object.keys(cards).map((k) => String(k));
+
+    for (const taskClientId of desiredTaskClientIds) {
+      const card = cards[taskClientId];
+      if (!card || typeof card !== 'object') continue;
+
+      const placement = cardIdToPlacement.get(taskClientId);
+      const colClientId = placement?.columnClientId ?? null;
+      const dbCol = colClientId ? columnIdToDb.get(colClientId) : null;
+
+      const taskNumber = Number(card.taskNumber);
+      const title = String(card.title ?? '').trim();
+      const description = String(card.description ?? '');
+      const priority = String(card.priority ?? 'Medium');
+      const customerName = String(card.customer?.name ?? '').trim();
+      const assigneeName = String(card.assignee?.name ?? '').trim();
+      const assigneeInitials = String(card.assignee?.initials ?? '').trim();
+      const tags = Array.isArray(card.tags) ? card.tags : [];
+
+      const update = {
+        user_id: userId,
+        client_id: taskClientId,
+        task_number: Number.isFinite(taskNumber) ? taskNumber : null,
+        title: title || 'Untitled task',
+        text: description,
+        stat: dbCol ? dbCol.name : String(card.stat ?? 'To Do'),
+        priority,
+        column_id: dbCol ? dbCol.id : null,
+        position: placement?.position ?? 0,
+        customer_name: customerName || null,
+        assignee_name: assigneeName || null,
+        assignee_initials: assigneeInitials || null,
+        tags,
+      };
+
+      const existing = await Task.findOne({ where: { user_id: userId, client_id: taskClientId }, transaction: t });
+      if (!existing) {
+        await Task.create(update, { transaction: t });
+      } else {
+        await existing.update(update, { transaction: t });
+      }
+    }
+
+    await Task.destroy({
+      where: { user_id: userId, client_id: { [Op.ne]: null, [Op.notIn]: desiredTaskClientIds } },
+      transaction: t,
+    });
+
+    await Column.destroy({
+      where: { user_id: userId, client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds } },
+      transaction: t,
+    });
+  });
+}
+
+async function buildBoardFromTables(sequelize) {
+  const { Column, Task } = sequelize.models;
+  const userId = await getOrCreateApiUserId(sequelize);
+
+  const columns = await Column.findAll({
+    where: { user_id: userId, client_id: { [Op.ne]: null } },
+    order: [['position', 'ASC'], ['id', 'ASC']],
+  });
+
+  const tasks = await Task.findAll({
+    where: { user_id: userId, client_id: { [Op.ne]: null } },
+    order: [['position', 'ASC'], ['id', 'ASC']],
+  });
+
+  const tasksByColumnId = new Map();
+  for (const t of tasks) {
+    const colId = t.column_id ?? null;
+    const list = tasksByColumnId.get(colId) ?? [];
+    list.push(t);
+    tasksByColumnId.set(colId, list);
+  }
+
+  const board = {
+    columns: columns.map((c) => {
+      const colTasks = tasksByColumnId.get(c.id) ?? [];
+      return {
+        id: c.client_id ?? String(c.id),
+        title: c.name,
+        cardIds: colTasks.map((t) => t.client_id ?? String(t.id)),
+      };
+    }),
+    cards: {},
+  };
+
+  for (const t of tasks) {
+    const clientId = t.client_id ?? String(t.id);
+    board.cards[clientId] = {
+      id: clientId,
+      taskNumber: t.task_number ?? t.id,
+      title: t.title,
+      customer: t.customer_name ? { name: t.customer_name } : undefined,
+      description: t.text ?? '',
+      tags: Array.isArray(t.tags) ? t.tags : [],
+      priority: t.priority || 'Medium',
+      assignee: t.assignee_name
+        ? { name: t.assignee_name, initials: t.assignee_initials || t.assignee_name.slice(0, 2).toUpperCase() }
+        : undefined,
+    };
+  }
+
+  return { board, userId };
+}
+
 function defaultBoardState() {
   return {
     columns: [
@@ -161,6 +393,7 @@ app.get('/api/board', async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
     const { BoardState } = sequelize.models;
+
     const state = await BoardState.findByPk(1);
     if (!state) {
       const created = await BoardState.create({
@@ -168,9 +401,17 @@ app.get('/api/board', async (req, res) => {
         board: defaultBoardState(),
         next_task_number: 1,
       });
-      return res.json({ board: created.board, nextTaskNumber: created.next_task_number });
+      await syncBoardToTables(sequelize, created.board);
     }
-    res.json({ board: state.board, nextTaskNumber: state.next_task_number });
+
+    const freshState = await BoardState.findByPk(1);
+    let built = await buildBoardFromTables(sequelize);
+    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && freshState?.board) {
+      await syncBoardToTables(sequelize, freshState.board);
+      built = await buildBoardFromTables(sequelize);
+    }
+
+    res.json({ board: built.board, nextTaskNumber: freshState?.next_task_number ?? 1 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -197,6 +438,7 @@ app.put('/api/board', async (req, res) => {
       next_task_number: Number(nextTaskNumber),
       updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
     });
+    await syncBoardToTables(sequelize, board);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -552,10 +794,11 @@ async function backfillColumns(baseSequelize) {
 
 async function bootstrap() {
   const baseSequelize = getBaseSequelize();
-  const { Task, Column, BoardState } = baseSequelize.models;
+  const { Task, Column, BoardState, User } = baseSequelize.models;
 
   // If an admin connection string is provided, use it for DDL only.
   if (!databaseUrlAdmin || databaseUrlAdmin === databaseUrlApp) {
+    await User.sync({ alter: true });
     await Column.sync({ alter: true });
     await Task.sync({ alter: true });
     await BoardState.sync({ alter: true });
@@ -563,6 +806,7 @@ async function bootstrap() {
     const adminSequelize = new Sequelize(databaseUrlAdmin, { dialect: 'postgres', logging: false });
     const adminModels = defineModels(adminSequelize);
     await adminSequelize.authenticate();
+    await adminModels.User.sync({ alter: true });
     await adminModels.Column.sync({ alter: true });
     await adminModels.Task.sync({ alter: true });
     await adminModels.BoardState.sync({ alter: true });
