@@ -1,8 +1,18 @@
 type Props = {
   title: string;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
+  onToggleFilters: () => void;
+  onNewTask: () => void;
 };
 
-export function BoardHeader({ title }: Props) {
+export function BoardHeader({
+  title,
+  searchQuery,
+  onSearchQueryChange,
+  onToggleFilters,
+  onNewTask,
+}: Props) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -23,12 +33,18 @@ export function BoardHeader({ title }: Props) {
             />
           </svg>
           <input
+            value={searchQuery}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
             className="h-10 w-full rounded-xl border border-neutral-200 bg-white pl-9 pr-3 text-sm outline-none shadow-sm focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
             placeholder="Search tasks…"
           />
         </div>
 
-        <button className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60">
+        <button
+          type="button"
+          onClick={onToggleFilters}
+          className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+        >
           <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-neutral-500">
             <path
               fill="currentColor"
@@ -38,7 +54,11 @@ export function BoardHeader({ title }: Props) {
           Filters
         </button>
 
-        <button className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-3 text-sm text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300">
+        <button
+          type="button"
+          onClick={onNewTask}
+          className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-3 text-sm text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300"
+        >
           <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-white">
             <path fill="currentColor" d="M11 5h2v14h-2zM5 11h14v2H5z" />
           </svg>

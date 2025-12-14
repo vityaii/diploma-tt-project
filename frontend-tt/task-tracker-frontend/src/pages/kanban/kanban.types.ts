@@ -2,7 +2,9 @@ export type Priority = "Low" | "Medium" | "High";
 
 export type KanbanCard = {
   id: string;
+  taskNumber: number;
   title: string;
+  customer?: { name: string };
   description?: string;
   tags: string[];
   priority: Priority;
