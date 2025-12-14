@@ -3,14 +3,17 @@ const session = require('express-session');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth');
 
-const { databaseUrlApp, databaseUrlAdmin, port, sessionSecret } = require('./config');
+const {
+  databaseUrlApp,
+  databaseUrlAdmin,
+  port,
+  sessionSecret,
+  buildUserDbUrl,
+} = require('./config');
 
-const sequelize = new Sequelize(databaseUrlApp, {
-  dialect: 'postgres',
-  logging: false,
-});
+const sequelizeCache = new Map();
 
-const defineTaskModel = (sequelizeInstance) => sequelizeInstance.define('Task', {
+const defineTaskModel = (sequelizeInstance) => sequelizeInstance.models.Task || sequelizeInstance.define('Task', {
   id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -44,7 +47,6 @@ const defineTaskModel = (sequelizeInstance) => sequelizeInstance.define('Task', 
   tableName: 'tasks',
   timestamps: false,
 });
-const Tasks = defineTaskModel(sequelize);
 
 const app = express();
 
@@ -64,9 +66,51 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function getBaseSequelize() {
+  if (!sequelizeCache.has('_app')) {
+    const sequelize = new Sequelize(databaseUrlApp, {
+      dialect: 'postgres',
+      logging: false,
+    });
+    defineTaskModel(sequelize);
+    sequelizeCache.set('_app', sequelize);
+  }
+  return sequelizeCache.get('_app');
+}
+
+function getUserSequelize(req) {
+  if (!req.session.dbUser || !req.session.dbPassword) {
+    return getBaseSequelize();
+  }
+  const key = `${req.session.dbUser}:${req.session.dbPassword}`;
+  if (!sequelizeCache.has(key)) {
+    const sequelize = new Sequelize(buildUserDbUrl(req.session.dbUser, req.session.dbPassword), {
+      dialect: 'postgres',
+      logging: false,
+    });
+    defineTaskModel(sequelize);
+    sequelizeCache.set(key, sequelize);
+  }
+  return sequelizeCache.get(key);
+}
+
+async function getTaskModelForReq(req) {
+  const sequelize = getUserSequelize(req);
+  try {
+    await sequelize.authenticate();
+    return sequelize.models.Task;
+  } catch (err) {
+    // fallback to base connection if user-specific creds недоступны
+    const base = getBaseSequelize();
+    await base.authenticate();
+    return base.models.Task;
+  }
+}
+
 // получить все таски
 app.get('/tasks', requireAuth, async (req, res) => {
   try {
+    const Tasks = await getTaskModelForReq(req);
     const tasks = await Tasks.findAll({ where: { user_id: req.session.userId } });
     res.json(tasks);
   } catch (err) {
@@ -81,6 +125,7 @@ app.get('/tasks/search', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Укажите q' });
   }
   try {
+    const Tasks = await getTaskModelForReq(req);
     const tasks = await Tasks.findAll({
       where: {
         user_id: req.session.userId,
@@ -96,6 +141,7 @@ app.get('/tasks/search', requireAuth, async (req, res) => {
 // получить таску по id
 app.get('/tasks/:id', requireAuth, async (req, res) => {
   try {
+    const Tasks = await getTaskModelForReq(req);
     const task = await Tasks.findOne({
       where: { id: req.params.id, user_id: req.session.userId },
     });
@@ -116,6 +162,7 @@ app.post('/tasks', requireAuth, async (req, res) => {
   }
 
   try {
+    const Tasks = await getTaskModelForReq(req);
     const task = await Tasks.create({
       user_id: req.session.userId,
       title,
@@ -136,6 +183,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
   }
 
   try {
+    const Tasks = await getTaskModelForReq(req);
     const task = await Tasks.findOne({
       where: { id: req.params.id, user_id: req.session.userId },
     });
@@ -154,6 +202,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
 // вернёт все задачи при запросе к корню
 app.get('/', requireAuth, async (req, res) => {
   try {
+    const Tasks = await getTaskModelForReq(req);
     const tasks = await Tasks.findAll({ where: { user_id: req.session.userId } });
     res.json(tasks);
   } catch (e) {
@@ -163,6 +212,7 @@ app.get('/', requireAuth, async (req, res) => {
 // удаление задачи по id
 app.delete('/tasks/:id', requireAuth, async (req, res) => {
   try {
+    const Tasks = await getTaskModelForReq(req);
     const deleted = await Tasks.destroy({
       where: { id: req.params.id, user_id: req.session.userId },
     });
@@ -176,9 +226,10 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
 });
 
 async function bootstrap() {
+  const baseSequelize = getBaseSequelize();
   // If an admin connection string is provided, use it only for DDL and keep the app user least-privileged.
   if (!databaseUrlAdmin || databaseUrlAdmin === databaseUrlApp) {
-    await sequelize.sync({ alter: true });
+    await baseSequelize.sync({ alter: true });
   } else {
     const adminSequelize = new Sequelize(databaseUrlAdmin, { dialect: 'postgres', logging: false });
     const AdminTasks = defineTaskModel(adminSequelize);
@@ -187,7 +238,7 @@ async function bootstrap() {
     await adminSequelize.close();
   }
 
-  await sequelize.authenticate();
+  await baseSequelize.authenticate();
   app.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });

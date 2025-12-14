@@ -3,7 +3,7 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const { Pool } = require('pg');
-const { databaseUrlApp } = require('./config');
+const { databaseUrlApp, buildUserDbUrl } = require('./config');
 
 const router = express.Router();
 const saltRounds = 10;
@@ -11,6 +11,21 @@ const fallbackPool = new Pool({ connectionString: databaseUrlApp });
 
 function getPool(req) {
   return req.app?.locals?.db || fallbackPool;
+}
+
+async function verifyDbLogin(username, password) {
+  const pool = new Pool({ connectionString: buildUserDbUrl(username, password) });
+  try {
+    await pool.query('SELECT 1');
+    return true;
+  } finally {
+    await pool.end();
+  }
+}
+
+function stashDbCreds(req, username, password) {
+  req.session.dbUser = username;
+  req.session.dbPassword = password;
 }
 
 // принимать JSON и form-urlencoded, чтобы не тянуть пароли через querystring
@@ -32,7 +47,9 @@ router.post(
     body('username')
       .trim()
       .isLength({ min: 3 })
-      .withMessage('Имя пользователя должно быть ≥3 символов'),
+      .withMessage('Имя пользователя должно быть ≥3 символов')
+      .matches(/^[a-zA-Z0-9_]+$/)
+      .withMessage('Имя пользователя может содержать только латинские буквы, цифры и _'),
     body('password')
       .isLength({ min: 6 })
       .withMessage('Пароль должен быть ≥6 символов'),
@@ -65,6 +82,7 @@ router.post(
       req.session.regenerate(err => {
         if (err) return next(err);
         req.session.userId = newUser.id;
+        stashDbCreds(req, username, password);
         req.session.save(saveErr => {
           if (saveErr) return next(saveErr);
           res.status(201).json({
@@ -111,6 +129,7 @@ router.post(
       req.session.regenerate(err => {
         if (err) return next(err);
         req.session.userId = user.id;
+        stashDbCreds(req, username, password);
         req.session.save(saveErr => {
           if (saveErr) return next(saveErr);
           res.json({
@@ -146,7 +165,7 @@ router.post(
       const pool = getPool(req);
 
       const { rows } = await pool.query(
-        'SELECT id,password_hash FROM users WHERE id=$1',
+        'SELECT id, username, password_hash FROM users WHERE id=$1',
         [req.session.userId]
       );
       if (
@@ -162,6 +181,7 @@ router.post(
         rows[0].id,
       ]);
 
+      stashDbCreds(req, rows[0].username, newPassword);
       res.json({ message: 'Пароль изменён' });
     } catch (err) {
       next(err);

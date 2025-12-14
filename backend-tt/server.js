@@ -3,7 +3,7 @@ const session = require('express-session');
 const { Pool } = require('pg');
 const { databaseUrlApp, databaseUrlAdmin, port, sessionSecret } = require('./config');
 
-// const authRouter = require('./auth');    потом добавлю
+const authRouter = require('./auth');    
 const weatherRouter = require('./main');
 
 async function ensureSchema() {
@@ -45,7 +45,7 @@ async function start() {
   }));
 
   // Роуты
-  // app.use('/auth', authRouter);      WIP
+  app.use('/auth', authRouter);
   app.use('/main', weatherRouter);
 
   // вывод ошибок

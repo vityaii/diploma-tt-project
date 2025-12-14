@@ -17,9 +17,20 @@ if (!process.env.SESSION_SECRET || !process.env.SESSION_SECRET.trim()) {
 
 const port = Number(process.env.PORT) || 7070;
 
+function buildUserDbUrl(username, password) {
+  if (!username || !password) {
+    throw new Error('Username and password are required to build DB connection string');
+  }
+  const url = new URL(databaseUrlApp);
+  url.username = username;
+  url.password = password;
+  return url.toString();
+}
+
 module.exports = {
   databaseUrlApp: databaseUrlApp.trim(),
   databaseUrlAdmin: databaseUrlAdmin.trim(),
   sessionSecret: process.env.SESSION_SECRET.trim(),
   port,
+  buildUserDbUrl,
 };
