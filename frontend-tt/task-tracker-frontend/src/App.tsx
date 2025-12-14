@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KanbanPage } from "./pages/kanban/KanbanPage";
-import { boardMock } from "./pages/kanban/kanban.mock";
 import type { KanbanBoard, KanbanCard, Priority } from "./pages/kanban/kanban.types";
 import { TaskPage } from "./pages/task/TaskPage";
 import { ttApi } from "./api/ttApi";
@@ -22,12 +21,7 @@ function createId() {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-function getFallbackNextTaskNumber() {
-  return (
-    Math.max(0, ...Object.values(boardMock.cards).map((c) => (typeof c.taskNumber === "number" ? c.taskNumber : 0))) +
-    1
-  );
-}
+const EMPTY_BOARD: KanbanBoard = { columns: [], cards: {} };
 
 function setHash(hash: string) {
   const normalized = hash.startsWith("#") ? hash : `#${hash}`;
@@ -49,11 +43,8 @@ function useHashRoute() {
 export default function App() {
   const hash = useHashRoute();
 
-  const [board, setBoard] = useState<KanbanBoard>(() => ({
-    columns: boardMock.columns.map((c) => ({ ...c, cardIds: [...c.cardIds] })),
-    cards: { ...boardMock.cards },
-  }));
-  const [nextTaskNumber, setNextTaskNumber] = useState(() => getFallbackNextTaskNumber());
+  const [board, setBoard] = useState<KanbanBoard>(EMPTY_BOARD);
+  const [nextTaskNumber, setNextTaskNumber] = useState(1);
   const nextTaskNumberRef = useRef(nextTaskNumber);
   const [hydrated, setHydrated] = useState(false);
   const persistTimerRef = useRef<number | null>(null);
@@ -180,6 +171,18 @@ export default function App() {
   }, []);
 
   const taskMatch = hash.match(/^#\/task\/([^/]+)$/);
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen bg-neutral-100">
+        <div className="mx-auto flex min-h-screen max-w-[980px] items-center justify-center px-6 py-10">
+          <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-5 text-sm text-neutral-700 shadow-sm">
+            Loading board…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (taskMatch) {
     const taskId = decodeURIComponent(taskMatch[1]);
     return (
