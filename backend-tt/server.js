@@ -1,16 +1,14 @@
-// server.js
-require('dotenv').config();
-
 const express = require('express');
 const session = require('express-session');
 const { Pool } = require('pg');
+const { databaseUrl, port, sessionSecret } = require('./config');
 
 // const authRouter = require('./auth');    потом добавлю
 const weatherRouter = require('./main');
 
 async function start() {
   
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: databaseUrl });
 
   // Создаём таблицы, если их нет
   await pool.query(`
@@ -37,7 +35,7 @@ async function start() {
   app.locals.db = pool;
   app.use(express.urlencoded({ extended: true }));
   app.use(session({
-    secret: process.env.SESSION_SECRET,
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
   }));
@@ -53,9 +51,8 @@ async function start() {
   });
 
   // Старт
-  const PORT = process.env.PORT || 7070;
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
   });
 }
 

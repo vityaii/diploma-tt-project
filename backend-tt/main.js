@@ -1,16 +1,11 @@
-require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth');
 
-const {
-  DATABASE_URL = 'postgres://postgres:root@localhost:5432/ttbd',
-  PORT = 7070,
-  SESSION_SECRET = 'change_me',
-} = process.env;
+const { databaseUrl, port, sessionSecret } = require('./config');
 
-const sequelize = new Sequelize(DATABASE_URL, {
+const sequelize = new Sequelize(databaseUrl, {
   dialect: 'postgres',
   logging: false,
 });
@@ -55,7 +50,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
-  secret: SESSION_SECRET,
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
 }));
@@ -182,8 +177,8 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
 sequelize.authenticate()
   .then(() => sequelize.sync({ alter: true }))
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+    app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
     });
   })
   .catch(err => {
