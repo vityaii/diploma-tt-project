@@ -1,10 +1,5 @@
-const express = require('express');
-const session = require('express-session');
 const { Pool } = require('pg');
-const { databaseUrlApp, databaseUrlAdmin, port, sessionSecret } = require('./config');
-
-const authRouter = require('./auth');    
-const weatherRouter = require('./main');
+const { databaseUrlAdmin } = require('./config');
 
 async function ensureSchema() {
   const ddlPool = new Pool({ connectionString: databaseUrlAdmin });
@@ -17,47 +12,46 @@ async function ensureSchema() {
     );
   `);
   await ddlPool.query(`
+    CREATE TABLE IF NOT EXISTS columns (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(100) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(user_id, id)
+    );
+  `);
+  await ddlPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS columns_user_id_name_idx
+    ON columns(user_id, name);
+  `);
+  await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS tasks (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title VARCHAR(100) NOT NULL,
       text VARCHAR(100) NOT NULL,
       stat VARCHAR(100) NOT NULL,
+      priority VARCHAR(50) NOT NULL DEFAULT 'normal',
+      column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       UNIQUE(user_id, id)
     );
+  `);
+  await ddlPool.query(`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS priority VARCHAR(50) NOT NULL DEFAULT 'normal';
+  `);
+  await ddlPool.query(`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL;
   `);
   await ddlPool.end();
 }
 
 async function start() {
   await ensureSchema();
-
-  const pool = new Pool({ connectionString: databaseUrlApp });
-
-  const app = express();
-  app.locals.db = pool;
-  app.use(express.urlencoded({ extended: true }));
-  app.use(session({
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-  }));
-
-  // Роуты
-  app.use('/auth', authRouter);
-  app.use('/main', weatherRouter);
-
-  // вывод ошибок
-  app.use((err, req, res, next) => {
-    console.error(err);
-    res.status(500).json({ message: 'Internal server error' });
-  });
-
-  // Старт
-  app.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
-  });
+  // Основное API поднято в main.js
+  require('./main');
 }
 
 start().catch(err => {
