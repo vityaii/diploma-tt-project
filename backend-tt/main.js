@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
-const { Sequelize, DataTypes } = require('sequelize');
+const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth');
 
 const {
@@ -72,6 +72,25 @@ function requireAuth(req, res, next) {
 app.get('/tasks', requireAuth, async (req, res) => {
   try {
     const tasks = await Tasks.findAll({ where: { user_id: req.session.userId } });
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// поиск по началу названия: /tasks/search?q=abc
+app.get('/tasks/search', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q.length) {
+    return res.status(400).json({ error: 'Укажите q' });
+  }
+  try {
+    const tasks = await Tasks.findAll({
+      where: {
+        user_id: req.session.userId,
+        title: { [Op.iLike]: `${q}%` },
+      },
+    });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });

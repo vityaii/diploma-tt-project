@@ -2,9 +2,15 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
+const { Pool } = require('pg');
 
 const router = express.Router();
 const saltRounds = 10;
+const fallbackPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+function getPool(req) {
+  return req.app?.locals?.db || fallbackPool;
+}
 
 // принимать JSON и form-urlencoded, чтобы не тянуть пароли через querystring
 router.use(express.json());
@@ -38,7 +44,7 @@ router.post(
       }
 
       const { username, password } = req.body;
-      const pool = req.app.locals.db;
+      const pool = getPool(req);
 
       const exists = await pool.query(
         'SELECT 1 FROM users WHERE username=$1',
@@ -87,7 +93,7 @@ router.post(
       }
 
       const { username, password } = req.body;
-      const pool = req.app.locals.db;
+      const pool = getPool(req);
 
       const { rows } = await pool.query(
         'SELECT id, username, password_hash FROM users WHERE username=$1',
@@ -136,7 +142,7 @@ router.post(
       }
 
       const { oldPassword, newPassword } = req.body;
-      const pool = req.app.locals.db;
+      const pool = getPool(req);
 
       const { rows } = await pool.query(
         'SELECT id,password_hash FROM users WHERE id=$1',
