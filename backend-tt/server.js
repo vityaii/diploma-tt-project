@@ -1,17 +1,14 @@
 const express = require('express');
 const session = require('express-session');
 const { Pool } = require('pg');
-const { databaseUrl, port, sessionSecret } = require('./config');
+const { databaseUrlApp, databaseUrlAdmin, port, sessionSecret } = require('./config');
 
 // const authRouter = require('./auth');    потом добавлю
 const weatherRouter = require('./main');
 
-async function start() {
-  
-  const pool = new Pool({ connectionString: databaseUrl });
-
-  // Создаём таблицы, если их нет
-  await pool.query(`
+async function ensureSchema() {
+  const ddlPool = new Pool({ connectionString: databaseUrlAdmin });
+  await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username VARCHAR(50) UNIQUE NOT NULL,
@@ -19,7 +16,7 @@ async function start() {
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
-  await pool.query(`
+  await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS tasks (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -30,6 +27,13 @@ async function start() {
       UNIQUE(user_id, id)
     );
   `);
+  await ddlPool.end();
+}
+
+async function start() {
+  await ensureSchema();
+
+  const pool = new Pool({ connectionString: databaseUrlApp });
 
   const app = express();
   app.locals.db = pool;

@@ -3,11 +3,11 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const { Pool } = require('pg');
-const { databaseUrl } = require('./config');
+const { databaseUrlApp } = require('./config');
 
 const router = express.Router();
 const saltRounds = 10;
-const fallbackPool = new Pool({ connectionString: databaseUrl });
+const fallbackPool = new Pool({ connectionString: databaseUrlApp });
 
 function getPool(req) {
   return req.app?.locals?.db || fallbackPool;

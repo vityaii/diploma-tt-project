@@ -3,14 +3,14 @@ const session = require('express-session');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth');
 
-const { databaseUrl, port, sessionSecret } = require('./config');
+const { databaseUrlApp, databaseUrlAdmin, port, sessionSecret } = require('./config');
 
-const sequelize = new Sequelize(databaseUrl, {
+const sequelize = new Sequelize(databaseUrlApp, {
   dialect: 'postgres',
   logging: false,
 });
 
-const Tasks = sequelize.define('Task', {
+const defineTaskModel = (sequelizeInstance) => sequelizeInstance.define('Task', {
   id: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -44,6 +44,7 @@ const Tasks = sequelize.define('Task', {
   tableName: 'tasks',
   timestamps: false,
 });
+const Tasks = defineTaskModel(sequelize);
 
 const app = express();
 
@@ -174,14 +175,25 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
   }
 });
 
-sequelize.authenticate()
-  .then(() => sequelize.sync({ alter: true }))
-  .then(() => {
-    app.listen(port, () => {
-      console.log(`Server running on port ${port}`);
-    });
-  })
-  .catch(err => {
-    console.error('Unable to connect to the database:', err);
-    process.exit(1);
+async function bootstrap() {
+  // If an admin connection string is provided, use it only for DDL and keep the app user least-privileged.
+  if (!databaseUrlAdmin || databaseUrlAdmin === databaseUrlApp) {
+    await sequelize.sync({ alter: true });
+  } else {
+    const adminSequelize = new Sequelize(databaseUrlAdmin, { dialect: 'postgres', logging: false });
+    const AdminTasks = defineTaskModel(adminSequelize);
+    await adminSequelize.authenticate();
+    await AdminTasks.sync({ alter: true });
+    await adminSequelize.close();
+  }
+
+  await sequelize.authenticate();
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
   });
+}
+
+bootstrap().catch(err => {
+  console.error('Unable to start server:', err);
+  process.exit(1);
+});
