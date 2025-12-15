@@ -1,4 +1,21 @@
 services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ttbd
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5431:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ttbd"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend-tt
@@ -11,30 +28,37 @@ services:
     ports:
       - "${PORT:-7070}:7070"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
-  frontend:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
+  nginx:
+    image: nginx:alpine
     ports:
-      - "4173:4173"
+      - "8001:80"
+    volumes:
+      - web_dist:/usr/share/nginx/html:ro
+      # Если у тебя SPA (React/Vite) с роутингом, лучше добавить кастомный конфиг:
+      # - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
     restart: unless-stopped
 
-  db:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_DB: ttbd
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: root
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17
+    user: root
     ports:
-      - "5431:5432"
+      - "8080:8080"
+      # Если нужен inbound agent порт:
+      # - "50000:50000"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - jenkins_home:/var/jenkins_home
+      - web_dist:/mnt/nginx
+      # Нужен только если ты реально вызываешь docker/compose из Jenkins:
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:
   pgdata: {}
+  jenkins_home: {}
+  web_dist: {}
