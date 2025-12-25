@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-const { databaseUrlAdmin } = require('./config');
+const { databaseUrlAdmin } = require('./config/config.js');
 
 async function ensureSchema() {
   const ddlPool = new Pool({ connectionString: databaseUrlAdmin });
@@ -14,20 +14,20 @@ async function ensureSchema() {
   await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS columns (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name VARCHAR(100) NOT NULL,
       client_id TEXT,
       position INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      UNIQUE(user_id, id)
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+  await ddlPool.query(`ALTER TABLE columns DROP COLUMN IF EXISTS user_id;`);
   await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS client_id TEXT;`);
   await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`);
   await ddlPool.query(`DROP INDEX IF EXISTS columns_user_id_name_idx;`);
+  await ddlPool.query(`DROP INDEX IF EXISTS columns_user_id_client_id_idx;`);
   await ddlPool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS columns_user_id_client_id_idx
-    ON columns(user_id, client_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS columns_client_id_idx
+    ON columns(client_id)
     WHERE client_id IS NOT NULL;
   `);
   await ddlPool.query(`
@@ -87,7 +87,7 @@ async function ensureSchema() {
 async function start() {
   await ensureSchema();
   // Основное API поднято в main.js
-  require('./main');
+  require('./app.js');
 }
 
 start().catch(err => {

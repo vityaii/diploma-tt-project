@@ -1,7 +1,11 @@
 const express = require('express');
 const session = require('express-session');
+const path = require('path');
+const fs = require('fs');
+const swaggerUi = require('swagger-ui-express');
+const yaml = require('js-yaml');
 const { Sequelize, DataTypes, Op } = require('sequelize');
-const authRouter = require('./auth');
+const authRouter = require('./auth/auth');
 
 const {
   databaseUrlApp,
@@ -9,7 +13,7 @@ const {
   port,
   sessionSecret,
   buildUserDbUrl,
-} = require('./config');
+} = require('./config/config');
 
 const sequelizeCache = new Map();
 
@@ -74,10 +78,6 @@ function defineModels(sequelizeInstance) {
       allowNull: false,
       autoIncrement: true,
       primaryKey: true,
-    },
-    user_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
     },
     name: {
       type: DataTypes.STRING,
@@ -200,6 +200,23 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
 }));
+
+const openapiPath = path.resolve(__dirname, 'openapi.yaml');
+let openapiSpec = null;
+try {
+  openapiSpec = yaml.load(fs.readFileSync(openapiPath, 'utf8'));
+} catch (err) {
+  console.warn(`OpenAPI spec not loaded from ${openapiPath}:`, err.message);
+}
+if (!openapiSpec) {
+  openapiSpec = {
+    openapi: '3.0.0',
+    info: { title: 'API', version: '0.0.0' },
+    paths: {},
+  };
+}
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+
 app.use(authRouter); // /register, /login, /change-password, /logout
 
 let cachedApiUserId = null;
@@ -241,10 +258,10 @@ async function syncBoardToTables(sequelize, board) {
       if (!clientId || !title) continue;
 
       desiredColumnClientIds.push(clientId);
-      let dbCol = await Column.findOne({ where: { user_id: userId, client_id: clientId }, transaction: t });
+      let dbCol = await Column.findOne({ where: { client_id: clientId }, transaction: t });
       if (!dbCol) {
         dbCol = await Column.create(
-          { user_id: userId, client_id: clientId, name: title, position: i },
+          { client_id: clientId, name: title, position: i },
           { transaction: t },
         );
       } else {
@@ -314,7 +331,7 @@ async function syncBoardToTables(sequelize, board) {
     });
 
     await Column.destroy({
-      where: { user_id: userId, client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds } },
+      where: { client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds } },
       transaction: t,
     });
   });
@@ -325,7 +342,7 @@ async function buildBoardFromTables(sequelize) {
   const userId = await getOrCreateApiUserId(sequelize);
 
   const columns = await Column.findAll({
-    where: { user_id: userId, client_id: { [Op.ne]: null } },
+    where: { client_id: { [Op.ne]: null } },
     order: [['position', 'ASC'], ['id', 'ASC']],
   });
 
@@ -388,7 +405,7 @@ function defaultBoardState() {
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
-
+// API для получения доски
 app.get('/api/board', async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
@@ -416,7 +433,7 @@ app.get('/api/board', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+// API для обновления доски
 app.put('/api/board', async (req, res) => {
   const { board, nextTaskNumber } = req.body || {};
   if (!board || typeof board !== 'object') {
@@ -492,17 +509,17 @@ async function getModelsForReq(req) {
   }
 }
 
-async function ensureColumnForUser(Column, userId, name) {
+async function ensureColumnByName(Column, name) {
   const trimmed = (name || '').trim();
   if (!trimmed) return null;
-  const existing = await Column.findOne({ where: { user_id: userId, name: trimmed } });
+  const existing = await Column.findOne({ where: { name: trimmed } });
   if (existing) return existing;
-  return Column.create({ user_id: userId, name: trimmed });
+  return Column.create({ name: trimmed });
 }
 
-async function validateColumnById(Column, userId, columnId) {
+async function validateColumnById(Column, columnId) {
   if (columnId === undefined || columnId === null) return null;
-  const col = await Column.findOne({ where: { id: columnId, user_id: userId } });
+  const col = await Column.findOne({ where: { id: columnId } });
   if (!col) {
     const err = new Error('Колонка не найдена');
     err.status = 404;
@@ -570,9 +587,9 @@ app.post('/tasks', requireAuth, async (req, res) => {
 
     let resolvedColumn = null;
     if (columnId !== undefined) {
-      resolvedColumn = await validateColumnById(Column, req.session.userId, Number(columnId));
+      resolvedColumn = await validateColumnById(Column, Number(columnId));
     } else if (stat) {
-      resolvedColumn = await ensureColumnForUser(Column, req.session.userId, stat);
+      resolvedColumn = await ensureColumnByName(Column, stat);
     }
 
     const task = await Task.create({
@@ -610,9 +627,9 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
       if (columnId === null) {
         return res.status(400).json({ error: 'columnId не может быть null' });
       }
-      resolvedColumn = await validateColumnById(Column, req.session.userId, Number(columnId));
+      resolvedColumn = await validateColumnById(Column, Number(columnId));
     } else if (stat !== undefined) {
-      resolvedColumn = await ensureColumnForUser(Column, req.session.userId, stat);
+      resolvedColumn = await ensureColumnByName(Column, stat);
     }
 
     if (title !== undefined) task.title = title;
@@ -715,7 +732,6 @@ app.get('/columns', requireAuth, async (req, res) => {
   try {
     const { Column, Task } = await getModelsForReq(req);
     const columns = await Column.findAll({
-      where: { user_id: req.session.userId },
       include: [{
         model: Task,
         required: false,
@@ -737,11 +753,11 @@ app.post('/columns', requireAuth, async (req, res) => {
   }
   try {
     const { Column } = await getModelsForReq(req);
-    const existing = await Column.findOne({ where: { user_id: req.session.userId, name } });
+    const existing = await Column.findOne({ where: { name } });
     if (existing) {
       return res.status(409).json({ error: 'Колонка с таким названием уже существует' });
     }
-    const column = await Column.create({ user_id: req.session.userId, name });
+    const column = await Column.create({ name });
     res.status(201).json(column);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -770,17 +786,17 @@ async function backfillColumns(baseSequelize) {
     attributes: ['id', 'user_id', 'stat', 'column_id'],
   });
 
-  const cache = new Map(); // key: `${userId}:${stat}`
+  const cache = new Map(); // key: stat
   for (const task of tasks) {
     const statName = (task.stat || '').trim();
     if (!statName) continue;
-    const key = `${task.user_id}:${statName}`;
+    const key = statName;
 
     let column = cache.get(key);
     if (!column) {
-      column = await Column.findOne({ where: { user_id: task.user_id, name: statName } });
+      column = await Column.findOne({ where: { name: statName } });
       if (!column) {
-        column = await Column.create({ user_id: task.user_id, name: statName });
+        column = await Column.create({ name: statName });
       }
       cache.set(key, column);
     }
