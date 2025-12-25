@@ -37,7 +37,7 @@ services:
     ports:
       - "8001:80"
     volumes:
-      - web_dist:./frontend-tt/task-tracker-frontend/dist:/usr/share/nginx/html:ro
+      - web_dist:/usr/share/nginx/html:ro
     depends_on:
       - backend
     restart: unless-stopped
