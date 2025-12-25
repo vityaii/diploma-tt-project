@@ -1,5 +1,9 @@
 const express = require('express');
 const session = require('express-session');
+const path = require('path');
+const fs = require('fs');
+const swaggerUi = require('swagger-ui-express');
+const yaml = require('js-yaml');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth');
 
@@ -196,6 +200,13 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
 }));
+
+const openapiPath = path.resolve(__dirname, 'openapi.yaml');
+if (fs.existsSync(openapiPath)) {
+  const openapiSpec = yaml.load(fs.readFileSync(openapiPath, 'utf8'));
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+}
+
 app.use(authRouter); // /register, /login, /change-password, /logout
 
 let cachedApiUserId = null;
