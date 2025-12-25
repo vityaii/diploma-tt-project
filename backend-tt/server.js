@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-const { databaseUrlAdmin } = require('./config');
+const { databaseUrlAdmin } = require('./config/config.js');
 
 async function ensureSchema() {
   const ddlPool = new Pool({ connectionString: databaseUrlAdmin });
@@ -87,7 +87,7 @@ async function ensureSchema() {
 async function start() {
   await ensureSchema();
   // Основное API поднято в main.js
-  require('./main');
+  require('./app.js');
 }
 
 start().catch(err => {

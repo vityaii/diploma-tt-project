@@ -5,7 +5,7 @@ const fs = require('fs');
 const swaggerUi = require('swagger-ui-express');
 const yaml = require('js-yaml');
 const { Sequelize, DataTypes, Op } = require('sequelize');
-const authRouter = require('./auth');
+const authRouter = require('./auth/auth');
 
 const {
   databaseUrlApp,
@@ -202,10 +202,20 @@ app.use(session({
 }));
 
 const openapiPath = path.resolve(__dirname, 'openapi.yaml');
-if (fs.existsSync(openapiPath)) {
-  const openapiSpec = yaml.load(fs.readFileSync(openapiPath, 'utf8'));
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+let openapiSpec = null;
+try {
+  openapiSpec = yaml.load(fs.readFileSync(openapiPath, 'utf8'));
+} catch (err) {
+  console.warn(`OpenAPI spec not loaded from ${openapiPath}:`, err.message);
 }
+if (!openapiSpec) {
+  openapiSpec = {
+    openapi: '3.0.0',
+    info: { title: 'API', version: '0.0.0' },
+    paths: {},
+  };
+}
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 app.use(authRouter); // /register, /login, /change-password, /logout
 
