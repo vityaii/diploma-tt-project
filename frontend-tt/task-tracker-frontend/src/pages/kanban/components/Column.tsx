@@ -8,9 +8,10 @@ type Props = {
   column: KanbanColumn;
   cards: KanbanCard[];
   onOpenCard?: (cardId: string) => void;
+  onRenameColumn?: (columnId: string) => void;
 };
 
-export function Column({ column, cards, onOpenCard }: Props) {
+export function Column({ column, cards, onOpenCard, onRenameColumn }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: dndIds.column(column.id) });
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
@@ -32,6 +33,8 @@ export function Column({ column, cards, onOpenCard }: Props) {
           </div>
           <button
             aria-label="Column menu"
+            type="button"
+            onClick={() => onRenameColumn?.(column.id)}
             className="grid h-9 w-9 place-items-center rounded-xl border border-transparent text-neutral-500 hover:border-neutral-200 hover:bg-white focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
           >
             <span className="text-lg leading-none">⋯</span>

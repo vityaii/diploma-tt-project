@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { KanbanPage } from "./pages/kanban/KanbanPage";
 import type { KanbanBoard, KanbanCard, Priority } from "./pages/kanban/kanban.types";
 import { TaskPage } from "./pages/task/TaskPage";
-import { ttApi } from "./api/ttApi";
+import { ProjectsPage } from "./pages/projects/ProjectsPage";
+import { ttApi, type Project } from "./api/ttApi";
 
 function makeInitials(name: string) {
   const parts = name
@@ -46,8 +47,10 @@ export default function App() {
   const [board, setBoard] = useState<KanbanBoard>(EMPTY_BOARD);
   const [nextTaskNumber, setNextTaskNumber] = useState(1);
   const nextTaskNumberRef = useRef(nextTaskNumber);
-  const [hydrated, setHydrated] = useState(false);
+  const [boardLoaded, setBoardLoaded] = useState(false);
   const persistTimerRef = useRef<number | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
 
   useEffect(() => {
     nextTaskNumberRef.current = nextTaskNumber;
@@ -56,7 +59,41 @@ export default function App() {
   useEffect(() => {
     let canceled = false;
     ttApi
-      .getBoard()
+      .getProjects()
+      .then((items) => {
+        if (canceled) return;
+        setProjects(items);
+      })
+      .catch((err) => {
+        console.error("Failed to load projects:", err);
+      })
+      .finally(() => {
+        if (canceled) return;
+        setProjectsLoaded(true);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  const projectTaskMatch = hash.match(/^#\/project\/(\d+)\/task\/([^/]+)$/);
+  const projectMatch = hash.match(/^#\/project\/(\d+)$/);
+  const activeProjectId = projectTaskMatch
+    ? Number(projectTaskMatch[1])
+    : projectMatch
+      ? Number(projectMatch[1])
+      : null;
+  const activeTaskId = projectTaskMatch ? decodeURIComponent(projectTaskMatch[2]) : null;
+
+  useEffect(() => {
+    if (!activeProjectId || Number.isNaN(activeProjectId)) return;
+    let canceled = false;
+    setBoardLoaded(false);
+    setBoard(EMPTY_BOARD);
+
+    ttApi
+      .getBoard(activeProjectId)
       .then(({ board: remoteBoard, nextTaskNumber: remoteNext }) => {
         if (canceled) return;
         setBoard(remoteBoard);
@@ -67,27 +104,27 @@ export default function App() {
       })
       .finally(() => {
         if (canceled) return;
-        setHydrated(true);
+        setBoardLoaded(true);
       });
 
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [activeProjectId]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!activeProjectId || !boardLoaded) return;
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     persistTimerRef.current = window.setTimeout(() => {
       ttApi
-        .putBoard({ board, nextTaskNumber })
+        .putBoard(activeProjectId, { board, nextTaskNumber })
         .catch((err) => console.error("Failed to save board to backend:", err));
     }, 250);
 
     return () => {
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     };
-  }, [board, hydrated, nextTaskNumber]);
+  }, [activeProjectId, board, boardLoaded, nextTaskNumber]);
 
   const saveTask = useMemo(() => {
     type Draft = {
@@ -170,37 +207,94 @@ export default function App() {
     };
   }, []);
 
-  const taskMatch = hash.match(/^#\/task\/([^/]+)$/);
-  if (!hydrated) {
+  const deleteTask = useMemo(() => {
+    return (taskId: string) => {
+      setBoard((prev) => {
+        if (!prev.cards[taskId]) return prev;
+        const nextCards = { ...prev.cards };
+        delete nextCards[taskId];
+        const nextColumns = prev.columns.map((col) => ({
+          ...col,
+          cardIds: col.cardIds.filter((id) => id !== taskId),
+        }));
+        return { ...prev, cards: nextCards, columns: nextColumns };
+      });
+    };
+  }, []);
+
+  if (activeProjectId && Number.isNaN(activeProjectId)) {
     return (
       <div className="min-h-screen bg-neutral-100">
         <div className="mx-auto flex min-h-screen max-w-[980px] items-center justify-center px-6 py-10">
           <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-5 text-sm text-neutral-700 shadow-sm">
-            Loading board…
+            Invalid project.
           </div>
         </div>
       </div>
     );
   }
 
-  if (taskMatch) {
-    const taskId = decodeURIComponent(taskMatch[1]);
+  if (activeTaskId && activeProjectId) {
     return (
       <TaskPage
-        taskId={taskId}
+        taskId={activeTaskId}
         board={board}
         onSaveTask={saveTask}
-        onBack={() => setHash("#/")}
-        onOpenTask={(id) => setHash(`#/task/${encodeURIComponent(id)}`)}
+        onBack={() => setHash(`#/project/${activeProjectId}`)}
+        onOpenTask={(id) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(id)}`)}
+        onDeleteTask={deleteTask}
+      />
+    );
+  }
+
+  if (activeProjectId) {
+    if (!boardLoaded) {
+      return (
+        <div className="min-h-screen bg-neutral-100">
+          <div className="mx-auto flex min-h-screen max-w-[980px] items-center justify-center px-6 py-10">
+            <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-5 text-sm text-neutral-700 shadow-sm">
+              Loading board…
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const currentProject = projects.find((p) => p.id === activeProjectId);
+    if (projectsLoaded && !currentProject) {
+      return (
+        <div className="min-h-screen bg-neutral-100">
+          <div className="mx-auto flex min-h-screen max-w-[980px] items-center justify-center px-6 py-10">
+            <div className="rounded-3xl border border-neutral-200 bg-white px-6 py-5 text-sm text-neutral-700 shadow-sm">
+              Project not found.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <KanbanPage
+        board={board}
+        onBoardChange={setBoard}
+        onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
+        projectName={currentProject?.name ?? "Project"}
+        projectTheme={currentProject?.theme ?? ""}
+        onOpenProjects={() => setHash("#/")}
       />
     );
   }
 
   return (
-    <KanbanPage
-      board={board}
-      onBoardChange={setBoard}
-      onOpenTask={(taskId) => setHash(`#/task/${encodeURIComponent(taskId)}`)}
+    <ProjectsPage
+      projects={projects}
+      loading={!projectsLoaded}
+      onOpenProject={(projectId) => setHash(`#/project/${projectId}`)}
+      onCreateProject={async ({ name, theme }) => {
+        const created = await ttApi.createProject({ name, theme });
+        setProjects((prev) => [...prev, created]);
+        return created;
+      }}
     />
   );
 }

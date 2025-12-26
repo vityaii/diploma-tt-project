@@ -11,6 +11,9 @@ type Props = {
   board: KanbanBoard;
   onBoardChange: Dispatch<SetStateAction<KanbanBoard>>;
   onOpenTask?: (taskId: string) => void;
+  projectName: string;
+  projectTheme: string;
+  onOpenProjects: () => void;
 };
 
 function findColumnIdByCardId(board: KanbanBoard, cardId: string) {
@@ -20,7 +23,14 @@ function findColumnIdByCardId(board: KanbanBoard, cardId: string) {
   return null;
 }
 
-export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
+export function KanbanPage({
+  board,
+  onBoardChange,
+  onOpenTask,
+  projectName,
+  projectTheme,
+  onOpenProjects,
+}: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [priorityFilters, setPriorityFilters] = useState<Set<Priority>>(
@@ -62,10 +72,12 @@ export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
     <div className="min-h-screen bg-neutral-100">
       <div className="mx-auto flex min-h-screen max-w-[1400px] flex-col px-6 py-8">
         <BoardHeader
-          title="My Project"
+          title={projectName}
+          subtitle={projectTheme || "Kanban board"}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
           onToggleFilters={() => setFiltersOpen((v) => !v)}
+          onOpenProjects={onOpenProjects}
           onAddColumn={() => {
             const title = window.prompt("Column title");
             if (!title) return;
@@ -206,6 +218,20 @@ export function KanbanPage({ board, onBoardChange, onOpenTask }: Props) {
                     column={col}
                     cards={cards}
                     onOpenCard={(id) => onOpenTask?.(id)}
+                    onRenameColumn={(columnId) => {
+                      const target = board.columns.find((c) => c.id === columnId);
+                      if (!target) return;
+                      const nextTitle = window.prompt("Rename status", target.title);
+                      if (!nextTitle) return;
+                      const trimmed = nextTitle.trim();
+                      if (!trimmed || trimmed === target.title) return;
+                      onBoardChange((prev) => ({
+                        ...prev,
+                        columns: prev.columns.map((c) =>
+                          c.id === columnId ? { ...c, title: trimmed } : c,
+                        ),
+                      }));
+                    }}
                   />
                 );
               })}

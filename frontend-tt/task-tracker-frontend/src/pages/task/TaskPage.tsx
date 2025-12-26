@@ -18,6 +18,7 @@ type Props = {
   ) => string;
   onBack: () => void;
   onOpenTask: (id: string) => void;
+  onDeleteTask: (id: string) => void;
 };
 
 function priorityBadge(priority: KanbanCard["priority"]) {
@@ -27,7 +28,7 @@ function priorityBadge(priority: KanbanCard["priority"]) {
   return `${base} border-emerald-200 bg-emerald-50 text-emerald-700`;
 }
 
-export function TaskPage({ taskId, board, onSaveTask, onBack, onOpenTask }: Props) {
+export function TaskPage({ taskId, board, onSaveTask, onBack, onOpenTask, onDeleteTask }: Props) {
   const initialTask = useMemo(() => {
     if (taskId === "new") {
       return {
@@ -237,29 +238,44 @@ export function TaskPage({ taskId, board, onSaveTask, onBack, onOpenTask }: Prop
 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-neutral-500">
-                {justSaved ? "Saved locally (mock)." : "Changes are local (mock data)."}
+                {justSaved ? "Saved" : "Changes are saved"}
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  const savedId = onSaveTask(taskId, {
-                    title,
-                    customerName,
-                    assigneeName: assigneeName === "Unassigned" ? "" : assigneeName,
-                    description,
-                    tags,
-                    priority,
-                  });
+              <div className="flex items-center gap-2">
+                {taskId !== "new" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm("Delete this task?")) return;
+                      onDeleteTask(taskId);
+                      onBack();
+                    }}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-medium text-red-700 shadow-sm hover:bg-red-100 focus:outline-none focus:ring-4 focus:ring-red-200/60"
+                  >
+                    Delete
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const savedId = onSaveTask(taskId, {
+                      title,
+                      customerName,
+                      assigneeName: assigneeName === "Unassigned" ? "" : assigneeName,
+                      description,
+                      tags,
+                      priority,
+                    });
 
-                  setJustSaved(true);
-                  window.setTimeout(() => setJustSaved(false), 1500);
+                    setJustSaved(true);
+                    window.setTimeout(() => setJustSaved(false), 1500);
 
-                  if (taskId === "new") onOpenTask(savedId);
-                }}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300"
-              >
-                Save
-              </button>
+                    if (taskId === "new") onOpenTask(savedId);
+                  }}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-4 text-sm font-medium text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300"
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         </div>

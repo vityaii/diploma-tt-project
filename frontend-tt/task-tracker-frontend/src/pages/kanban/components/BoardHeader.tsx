@@ -1,17 +1,21 @@
 type Props = {
   title: string;
+  subtitle?: string;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
   onToggleFilters: () => void;
+  onOpenProjects: () => void;
   onAddColumn: () => void;
   onNewTask: () => void;
 };
 
 export function BoardHeader({
   title,
+  subtitle,
   searchQuery,
   onSearchQueryChange,
   onToggleFilters,
+  onOpenProjects,
   onAddColumn,
   onNewTask,
 }: Props) {
@@ -19,7 +23,7 @@ export function BoardHeader({
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">{title}</h1>
-        <p className="mt-0.5 text-sm text-neutral-500">Kanban board</p>
+        <p className="mt-0.5 text-sm text-neutral-500">{subtitle || "Kanban board"}</p>
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-2">
@@ -41,6 +45,20 @@ export function BoardHeader({
             placeholder="Search tasks…"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenProjects}
+          className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-neutral-500">
+            <path
+              fill="currentColor"
+              d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"
+            />
+          </svg>
+          Projects
+        </button>
 
         <button
           type="button"
