@@ -43,11 +43,40 @@ function defineModels(sequelizeInstance) {
     timestamps: false,
   });
 
+  const Project = sequelizeInstance.models.Project || sequelizeInstance.define('Project', {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+    name: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+    },
+    theme: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      defaultValue: '',
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+    },
+  }, {
+    tableName: 'projects',
+    timestamps: false,
+  });
+
   const BoardState = sequelizeInstance.models.BoardState || sequelizeInstance.define('BoardState', {
     id: {
       type: DataTypes.INTEGER,
       allowNull: false,
       primaryKey: true,
+    },
+    project_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
     },
     board: {
       type: DataTypes.JSONB,
@@ -85,6 +114,10 @@ function defineModels(sequelizeInstance) {
     },
     client_id: {
       type: DataTypes.STRING,
+      allowNull: true,
+    },
+    project_id: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
     position: {
@@ -140,6 +173,10 @@ function defineModels(sequelizeInstance) {
       type: DataTypes.STRING,
       allowNull: true,
     },
+    project_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     task_number: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -178,8 +215,12 @@ function defineModels(sequelizeInstance) {
 
   Column.hasMany(Task, { foreignKey: 'column_id' });
   Task.belongsTo(Column, { foreignKey: 'column_id' });
+  Project.hasMany(Column, { foreignKey: 'project_id' });
+  Project.hasMany(Task, { foreignKey: 'project_id' });
+  Column.belongsTo(Project, { foreignKey: 'project_id' });
+  Task.belongsTo(Project, { foreignKey: 'project_id' });
 
-  return { Task, Column, BoardState, User };
+  return { Task, Column, BoardState, User, Project };
 }
 
 const app = express();
@@ -220,6 +261,7 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 app.use(authRouter); // /register, /login, /change-password, /logout
 
 let cachedApiUserId = null;
+let cachedDefaultProjectId = null;
 
 async function getOrCreateApiUserId(sequelize) {
   if (cachedApiUserId) return cachedApiUserId;
@@ -239,8 +281,40 @@ async function getOrCreateApiUserId(sequelize) {
   return cachedApiUserId;
 }
 
-async function syncBoardToTables(sequelize, board) {
+async function getOrCreateDefaultProjectId(sequelize) {
+  if (cachedDefaultProjectId) return cachedDefaultProjectId;
+  const { Project, Column, Task, BoardState } = sequelize.models;
+  let project = await Project.findOne({ order: [['id', 'ASC']] });
+  if (!project) {
+    project = await Project.create({ name: 'Default Project', theme: 'General' });
+  }
+  cachedDefaultProjectId = project.id;
+
+  const projectCount = await Project.count();
+  if (projectCount === 1) {
+    await Column.update(
+      { project_id: cachedDefaultProjectId },
+      { where: { project_id: { [Op.is]: null } } },
+    );
+    await Task.update(
+      { project_id: cachedDefaultProjectId },
+      { where: { project_id: { [Op.is]: null } } },
+    );
+    await BoardState.update(
+      { project_id: cachedDefaultProjectId },
+      { where: { project_id: { [Op.is]: null } } },
+    );
+  }
+
+  return cachedDefaultProjectId;
+}
+
+async function syncBoardToTables(sequelize, board, projectId) {
   const { Column, Task } = sequelize.models;
+  const normalizedProjectId = Number(projectId);
+  if (!Number.isFinite(normalizedProjectId)) {
+    throw new Error('Invalid projectId for board sync');
+  }
   const userId = await getOrCreateApiUserId(sequelize);
 
   const columnOrder = Array.isArray(board.columns) ? board.columns : [];
@@ -258,10 +332,13 @@ async function syncBoardToTables(sequelize, board) {
       if (!clientId || !title) continue;
 
       desiredColumnClientIds.push(clientId);
-      let dbCol = await Column.findOne({ where: { client_id: clientId }, transaction: t });
+      let dbCol = await Column.findOne({
+        where: { client_id: clientId, project_id: normalizedProjectId },
+        transaction: t,
+      });
       if (!dbCol) {
         dbCol = await Column.create(
-          { client_id: clientId, name: title, position: i },
+          { client_id: clientId, name: title, position: i, project_id: normalizedProjectId },
           { transaction: t },
         );
       } else {
@@ -304,6 +381,7 @@ async function syncBoardToTables(sequelize, board) {
       const update = {
         user_id: userId,
         client_id: taskClientId,
+        project_id: normalizedProjectId,
         task_number: Number.isFinite(taskNumber) ? taskNumber : null,
         title: title || 'Untitled task',
         text: description,
@@ -317,7 +395,10 @@ async function syncBoardToTables(sequelize, board) {
         tags,
       };
 
-      const existing = await Task.findOne({ where: { user_id: userId, client_id: taskClientId }, transaction: t });
+      const existing = await Task.findOne({
+        where: { user_id: userId, client_id: taskClientId, project_id: normalizedProjectId },
+        transaction: t,
+      });
       if (!existing) {
         await Task.create(update, { transaction: t });
       } else {
@@ -326,28 +407,39 @@ async function syncBoardToTables(sequelize, board) {
     }
 
     await Task.destroy({
-      where: { user_id: userId, client_id: { [Op.ne]: null, [Op.notIn]: desiredTaskClientIds } },
+      where: {
+        user_id: userId,
+        project_id: normalizedProjectId,
+        client_id: { [Op.ne]: null, [Op.notIn]: desiredTaskClientIds },
+      },
       transaction: t,
     });
 
     await Column.destroy({
-      where: { client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds } },
+      where: {
+        project_id: normalizedProjectId,
+        client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds },
+      },
       transaction: t,
     });
   });
 }
 
-async function buildBoardFromTables(sequelize) {
+async function buildBoardFromTables(sequelize, projectId) {
   const { Column, Task } = sequelize.models;
+  const normalizedProjectId = Number(projectId);
+  if (!Number.isFinite(normalizedProjectId)) {
+    throw new Error('Invalid projectId for board build');
+  }
   const userId = await getOrCreateApiUserId(sequelize);
 
   const columns = await Column.findAll({
-    where: { client_id: { [Op.ne]: null } },
+    where: { project_id: normalizedProjectId, client_id: { [Op.ne]: null } },
     order: [['position', 'ASC'], ['id', 'ASC']],
   });
 
   const tasks = await Task.findAll({
-    where: { user_id: userId, client_id: { [Op.ne]: null } },
+    where: { user_id: userId, project_id: normalizedProjectId, client_id: { [Op.ne]: null } },
     order: [['position', 'ASC'], ['id', 'ASC']],
   });
 
@@ -402,33 +494,142 @@ function defaultBoardState() {
   };
 }
 
+async function ensureBoardStateForProject(sequelize, projectId) {
+  const { BoardState } = sequelize.models;
+  let state = await BoardState.findOne({ where: { project_id: projectId } });
+  if (state) return state;
+
+  const byId = await BoardState.findByPk(projectId);
+  if (byId && (byId.project_id === null || byId.project_id === undefined)) {
+    await byId.update({ project_id: projectId });
+    return byId;
+  }
+
+  return BoardState.create({
+    id: projectId,
+    project_id: projectId,
+    board: defaultBoardState(),
+    next_task_number: 1,
+  });
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
+
+app.get('/api/projects', async (req, res) => {
+  try {
+    const sequelize = getBaseSequelize();
+    const { Project } = sequelize.models;
+    const projects = await Project.findAll({ order: [['id', 'ASC']] });
+    res.json(projects);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/projects', async (req, res) => {
+  const name = String(req.body?.name ?? '').trim();
+  const theme = String(req.body?.theme ?? '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'Укажите name' });
+  }
+  try {
+    const sequelize = getBaseSequelize();
+    const { Project } = sequelize.models;
+    const project = await Project.create({ name, theme });
+
+    const state = await ensureBoardStateForProject(sequelize, project.id);
+    await syncBoardToTables(sequelize, state.board, project.id);
+
+    res.status(201).json(project);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/projects/:projectId/board', async (req, res) => {
+  const projectId = Number(req.params.projectId);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Некорректный projectId' });
+  }
+  try {
+    const sequelize = getBaseSequelize();
+    const { Project } = sequelize.models;
+    const project = await Project.findByPk(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    const state = await ensureBoardStateForProject(sequelize, projectId);
+    await syncBoardToTables(sequelize, state.board, projectId);
+
+    let built = await buildBoardFromTables(sequelize, projectId);
+    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && state.board) {
+      await syncBoardToTables(sequelize, state.board, projectId);
+      built = await buildBoardFromTables(sequelize, projectId);
+    }
+
+    res.json({ board: built.board, nextTaskNumber: state.next_task_number });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/projects/:projectId/board', async (req, res) => {
+  const projectId = Number(req.params.projectId);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Некорректный projectId' });
+  }
+  const { board, nextTaskNumber } = req.body || {};
+  if (!board || typeof board !== 'object') {
+    return res.status(400).json({ error: 'Missing board' });
+  }
+  if (!Number.isFinite(Number(nextTaskNumber)) || Number(nextTaskNumber) < 1) {
+    return res.status(400).json({ error: 'Invalid nextTaskNumber' });
+  }
+  if (!Array.isArray(board.columns) || typeof board.cards !== 'object' || board.cards === null) {
+    return res.status(400).json({ error: 'Invalid board shape' });
+  }
+
+  try {
+    const sequelize = getBaseSequelize();
+    const { Project, BoardState } = sequelize.models;
+    const project = await Project.findByPk(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    const existing = await ensureBoardStateForProject(sequelize, projectId);
+    await existing.update({
+      board,
+      next_task_number: Number(nextTaskNumber),
+      updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
+    });
+
+    await syncBoardToTables(sequelize, board, projectId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API для получения доски
 app.get('/api/board', async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
-    const { BoardState } = sequelize.models;
+    const defaultProjectId = await getOrCreateDefaultProjectId(sequelize);
 
-    const state = await BoardState.findByPk(1);
-    if (!state) {
-      const created = await BoardState.create({
-        id: 1,
-        board: defaultBoardState(),
-        next_task_number: 1,
-      });
-      await syncBoardToTables(sequelize, created.board);
+    const state = await ensureBoardStateForProject(sequelize, defaultProjectId);
+    await syncBoardToTables(sequelize, state.board, defaultProjectId);
+
+    let built = await buildBoardFromTables(sequelize, defaultProjectId);
+    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && state.board) {
+      await syncBoardToTables(sequelize, state.board, defaultProjectId);
+      built = await buildBoardFromTables(sequelize, defaultProjectId);
     }
 
-    const freshState = await BoardState.findByPk(1);
-    let built = await buildBoardFromTables(sequelize);
-    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && freshState?.board) {
-      await syncBoardToTables(sequelize, freshState.board);
-      built = await buildBoardFromTables(sequelize);
-    }
-
-    res.json({ board: built.board, nextTaskNumber: freshState?.next_task_number ?? 1 });
+    res.json({ board: built.board, nextTaskNumber: state?.next_task_number ?? 1 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -448,14 +649,15 @@ app.put('/api/board', async (req, res) => {
 
   try {
     const sequelize = getBaseSequelize();
-    const { BoardState } = sequelize.models;
-    await BoardState.upsert({
-      id: 1,
+    const defaultProjectId = await getOrCreateDefaultProjectId(sequelize);
+
+    const existing = await ensureBoardStateForProject(sequelize, defaultProjectId);
+    await existing.update({
       board,
       next_task_number: Number(nextTaskNumber),
       updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
     });
-    await syncBoardToTables(sequelize, board);
+    await syncBoardToTables(sequelize, board, defaultProjectId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -509,17 +711,21 @@ async function getModelsForReq(req) {
   }
 }
 
-async function ensureColumnByName(Column, name) {
+async function ensureColumnByName(Column, name, projectId) {
   const trimmed = (name || '').trim();
   if (!trimmed) return null;
-  const existing = await Column.findOne({ where: { name: trimmed } });
+  const where = { name: trimmed };
+  if (projectId !== undefined) where.project_id = projectId;
+  const existing = await Column.findOne({ where });
   if (existing) return existing;
-  return Column.create({ name: trimmed });
+  return Column.create({ name: trimmed, project_id: projectId ?? null });
 }
 
-async function validateColumnById(Column, columnId) {
+async function validateColumnById(Column, columnId, projectId) {
   if (columnId === undefined || columnId === null) return null;
-  const col = await Column.findOne({ where: { id: columnId } });
+  const where = { id: columnId };
+  if (projectId !== undefined) where.project_id = projectId;
+  const col = await Column.findOne({ where });
   if (!col) {
     const err = new Error('Колонка не найдена');
     err.status = 404;
@@ -577,19 +783,23 @@ app.get('/tasks/:id', requireAuth, async (req, res) => {
 
 // создать таску
 app.post('/tasks', requireAuth, async (req, res) => {
-  const { title, text = '', stat = 'Создана', priority = 'normal', columnId } = req.body;
+  const { title, text = '', stat = 'Создана', priority = 'normal', columnId, projectId } = req.body;
   if (!title) {
     return res.status(400).json({ error: 'Необходимо указать title' });
   }
 
   try {
     const { Task, Column } = await getModelsForReq(req);
+    const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
+    if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId' });
+    }
 
     let resolvedColumn = null;
     if (columnId !== undefined) {
-      resolvedColumn = await validateColumnById(Column, Number(columnId));
+      resolvedColumn = await validateColumnById(Column, Number(columnId), resolvedProjectId);
     } else if (stat) {
-      resolvedColumn = await ensureColumnByName(Column, stat);
+      resolvedColumn = await ensureColumnByName(Column, stat, resolvedProjectId);
     }
 
     const task = await Task.create({
@@ -599,6 +809,7 @@ app.post('/tasks', requireAuth, async (req, res) => {
       stat: resolvedColumn ? resolvedColumn.name : stat,
       priority,
       column_id: resolvedColumn ? resolvedColumn.id : null,
+      project_id: resolvedProjectId ?? null,
     });
     res.status(201).json(task);
   } catch (err) {
@@ -608,8 +819,15 @@ app.post('/tasks', requireAuth, async (req, res) => {
 
 // Редактировать таску по id
 app.put('/tasks/:id', requireAuth, async (req, res) => {
-  const { title, text, stat, priority, columnId } = req.body;
-  if (title === undefined && text === undefined && stat === undefined && priority === undefined && columnId === undefined) {
+  const { title, text, stat, priority, columnId, projectId } = req.body;
+  if (
+    title === undefined &&
+    text === undefined &&
+    stat === undefined &&
+    priority === undefined &&
+    columnId === undefined &&
+    projectId === undefined
+  ) {
     return res.status(400).json({ error: 'Нечего обновлять' });
   }
 
@@ -622,14 +840,19 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Не найдена задача' });
     }
 
+    const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
+    if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+
     let resolvedColumn = null;
     if (columnId !== undefined) {
       if (columnId === null) {
         return res.status(400).json({ error: 'columnId не может быть null' });
       }
-      resolvedColumn = await validateColumnById(Column, Number(columnId));
+      resolvedColumn = await validateColumnById(Column, Number(columnId), resolvedProjectId);
     } else if (stat !== undefined) {
-      resolvedColumn = await ensureColumnByName(Column, stat);
+      resolvedColumn = await ensureColumnByName(Column, stat, resolvedProjectId);
     }
 
     if (title !== undefined) task.title = title;
@@ -644,6 +867,10 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
         task.stat = stat;
         task.column_id = null;
       }
+    }
+
+    if (resolvedProjectId !== undefined) {
+      task.project_id = resolvedProjectId;
     }
 
     await task.save();
@@ -666,7 +893,7 @@ app.get('/', requireAuth, async (req, res) => {
 
 // Фильтрация задач по приоритету/статусу/пользователю
 app.get('/tasks/filter', requireAuth, async (req, res) => {
-  const { priority, stat, userId, columnId } = req.query;
+  const { priority, stat, userId, columnId, projectId } = req.query;
   const targetUserId = userId ? Number(userId) : req.session.userId;
   if (Number.isNaN(targetUserId)) {
     return res.status(400).json({ error: 'Некорректный userId' });
@@ -675,6 +902,13 @@ app.get('/tasks/filter', requireAuth, async (req, res) => {
   const where = { user_id: targetUserId };
   if (priority) where.priority = priority;
   if (stat) where.stat = stat;
+  if (projectId !== undefined) {
+    const parsedProjectId = Number(projectId);
+    if (Number.isNaN(parsedProjectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+    where.project_id = parsedProjectId;
+  }
   if (columnId !== undefined) {
     const parsedColumnId = Number(columnId);
     if (Number.isNaN(parsedColumnId)) {
@@ -731,11 +965,18 @@ app.get('/users/search', requireAuth, async (req, res) => {
 app.get('/columns', requireAuth, async (req, res) => {
   try {
     const { Column, Task } = await getModelsForReq(req);
+    const projectId = req.query.projectId !== undefined ? Number(req.query.projectId) : undefined;
+    if (projectId !== undefined && Number.isNaN(projectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+    const where = {};
+    if (projectId !== undefined) where.project_id = projectId;
     const columns = await Column.findAll({
+      where,
       include: [{
         model: Task,
         required: false,
-        where: { user_id: req.session.userId },
+        where: { user_id: req.session.userId, ...(projectId !== undefined ? { project_id: projectId } : {}) },
       }],
       order: [['id', 'ASC']],
     });
@@ -753,11 +994,17 @@ app.post('/columns', requireAuth, async (req, res) => {
   }
   try {
     const { Column } = await getModelsForReq(req);
-    const existing = await Column.findOne({ where: { name } });
+    const projectId = req.body.projectId !== undefined ? Number(req.body.projectId) : undefined;
+    if (projectId !== undefined && Number.isNaN(projectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+    const where = { name };
+    if (projectId !== undefined) where.project_id = projectId;
+    const existing = await Column.findOne({ where });
     if (existing) {
       return res.status(409).json({ error: 'Колонка с таким названием уже существует' });
     }
-    const column = await Column.create({ name });
+    const column = await Column.create({ name, project_id: projectId ?? null });
     res.status(201).json(column);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -783,20 +1030,22 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
 async function backfillColumns(baseSequelize) {
   const { Task, Column } = baseSequelize.models;
   const tasks = await Task.findAll({
-    attributes: ['id', 'user_id', 'stat', 'column_id'],
+    attributes: ['id', 'user_id', 'stat', 'column_id', 'project_id'],
   });
 
   const cache = new Map(); // key: stat
   for (const task of tasks) {
     const statName = (task.stat || '').trim();
     if (!statName) continue;
-    const key = statName;
+    const key = `${task.project_id ?? 'none'}:${statName}`;
 
     let column = cache.get(key);
     if (!column) {
-      column = await Column.findOne({ where: { name: statName } });
+      column = await Column.findOne({
+        where: { name: statName, project_id: task.project_id ?? null },
+      });
       if (!column) {
-        column = await Column.create({ name: statName });
+        column = await Column.create({ name: statName, project_id: task.project_id ?? null });
       }
       cache.set(key, column);
     }
@@ -810,11 +1059,12 @@ async function backfillColumns(baseSequelize) {
 
 async function bootstrap() {
   const baseSequelize = getBaseSequelize();
-  const { Task, Column, BoardState, User } = baseSequelize.models;
+  const { Task, Column, BoardState, User, Project } = baseSequelize.models;
 
   // If an admin connection string is provided, use it for DDL only.
   if (!databaseUrlAdmin || databaseUrlAdmin === databaseUrlApp) {
     await User.sync({ alter: true });
+    await Project.sync({ alter: true });
     await Column.sync({ alter: true });
     await Task.sync({ alter: true });
     await BoardState.sync({ alter: true });
@@ -823,6 +1073,7 @@ async function bootstrap() {
     const adminModels = defineModels(adminSequelize);
     await adminSequelize.authenticate();
     await adminModels.User.sync({ alter: true });
+    await adminModels.Project.sync({ alter: true });
     await adminModels.Column.sync({ alter: true });
     await adminModels.Task.sync({ alter: true });
     await adminModels.BoardState.sync({ alter: true });

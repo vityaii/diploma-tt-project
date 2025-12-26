@@ -12,23 +12,40 @@ async function ensureSchema() {
     );
   `);
   await ddlPool.query(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      theme TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+  await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS columns (
       id SERIAL PRIMARY KEY,
       name VARCHAR(100) NOT NULL,
       client_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
       position INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
   await ddlPool.query(`ALTER TABLE columns DROP COLUMN IF EXISTS user_id;`);
   await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await ddlPool.query(
+    `ALTER TABLE columns ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;`,
+  );
   await ddlPool.query(`ALTER TABLE columns ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`);
   await ddlPool.query(`DROP INDEX IF EXISTS columns_user_id_name_idx;`);
   await ddlPool.query(`DROP INDEX IF EXISTS columns_user_id_client_id_idx;`);
+  await ddlPool.query(`DROP INDEX IF EXISTS columns_client_id_idx;`);
   await ddlPool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS columns_client_id_idx
-    ON columns(client_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS columns_project_id_client_id_idx
+    ON columns(project_id, client_id)
     WHERE client_id IS NOT NULL;
+  `);
+  await ddlPool.query(`
+    CREATE INDEX IF NOT EXISTS columns_project_id_position_idx
+    ON columns(project_id, position);
   `);
   await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -40,6 +57,7 @@ async function ensureSchema() {
       priority VARCHAR(50) NOT NULL DEFAULT 'normal',
       column_id INTEGER REFERENCES columns(id) ON DELETE SET NULL,
       client_id TEXT,
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
       task_number INTEGER,
       customer_name TEXT,
       assignee_name TEXT,
@@ -53,6 +71,9 @@ async function ensureSchema() {
   await ddlPool.query(`ALTER TABLE tasks ALTER COLUMN text TYPE TEXT;`);
   await ddlPool.query(`ALTER TABLE tasks ALTER COLUMN text SET DEFAULT '';`);
   await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await ddlPool.query(
+    `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;`,
+  );
   await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number INTEGER;`);
   await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS customer_name TEXT;`);
   await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_name TEXT;`);
@@ -61,25 +82,41 @@ async function ensureSchema() {
     `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;`,
   );
   await ddlPool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`);
+  await ddlPool.query(`DROP INDEX IF EXISTS tasks_user_id_client_id_idx;`);
+  await ddlPool.query(`DROP INDEX IF EXISTS tasks_user_id_task_number_idx;`);
   await ddlPool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS tasks_user_id_client_id_idx
-    ON tasks(user_id, client_id)
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_project_id_client_id_idx
+    ON tasks(project_id, client_id)
     WHERE client_id IS NOT NULL;
   `);
   await ddlPool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS tasks_user_id_task_number_idx
-    ON tasks(user_id, task_number)
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_project_id_task_number_idx
+    ON tasks(project_id, task_number)
     WHERE task_number IS NOT NULL;
+  `);
+  await ddlPool.query(`
+    CREATE INDEX IF NOT EXISTS tasks_project_id_position_idx
+    ON tasks(project_id, position);
   `);
 
   await ddlPool.query(`
     CREATE TABLE IF NOT EXISTS board_state (
       id INTEGER PRIMARY KEY,
+      project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
       board JSONB NOT NULL,
       next_task_number INTEGER NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+  `);
+  await ddlPool.query(
+    `ALTER TABLE board_state ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;`,
+  );
+  await ddlPool.query(`DROP INDEX IF EXISTS board_state_project_id_idx;`);
+  await ddlPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS board_state_project_id_idx
+    ON board_state(project_id)
+    WHERE project_id IS NOT NULL;
   `);
   await ddlPool.end();
 }
