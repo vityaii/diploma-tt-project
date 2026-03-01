@@ -8,5 +8,5 @@ pnpm-debug.log*
 dist
 build
 .env
-backend-tt/.env
+backend-tt/config/.env
 frontend-tt/.env
