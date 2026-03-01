@@ -6,13 +6,13 @@ const swaggerUi = require('swagger-ui-express');
 const yaml = require('js-yaml');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const authRouter = require('./auth/auth');
+const { requireAuth } = require('./auth/require-auth');
 
 const {
   databaseUrlApp,
   databaseUrlAdmin,
   port,
   sessionSecret,
-  buildUserDbUrl,
 } = require('./config/config');
 
 const sequelizeCache = new Map();
@@ -664,13 +664,6 @@ app.put('/api/board', async (req, res) => {
   }
 });
 
-function requireAuth(req, res, next) {
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Не авторизован' });
-  }
-  next();
-}
-
 function getBaseSequelize() {
   if (!sequelizeCache.has('_app')) {
     const sequelize = new Sequelize(databaseUrlApp, {
@@ -683,32 +676,10 @@ function getBaseSequelize() {
   return sequelizeCache.get('_app');
 }
 
-function getUserSequelize(req) {
-  if (!req.session.dbUser || !req.session.dbPassword) {
-    return getBaseSequelize();
-  }
-  const key = `${req.session.dbUser}:${req.session.dbPassword}`;
-  if (!sequelizeCache.has(key)) {
-    const sequelize = new Sequelize(buildUserDbUrl(req.session.dbUser, req.session.dbPassword), {
-      dialect: 'postgres',
-      logging: false,
-    });
-    defineModels(sequelize);
-    sequelizeCache.set(key, sequelize);
-  }
-  return sequelizeCache.get(key);
-}
-
 async function getModelsForReq(req) {
-  const sequelize = getUserSequelize(req);
-  try {
-    await sequelize.authenticate();
-    return { ...sequelize.models, sequelize };
-  } catch (err) {
-    const base = getBaseSequelize();
-    await base.authenticate();
-    return { ...base.models, sequelize: base };
-  }
+  const sequelize = getBaseSequelize();
+  await sequelize.authenticate();
+  return { ...sequelize.models, sequelize };
 }
 
 async function ensureColumnByName(Column, name, projectId) {
@@ -738,7 +709,7 @@ async function validateColumnById(Column, columnId, projectId) {
 app.get('/tasks', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
-    const tasks = await Task.findAll({ where: { user_id: req.session.userId } });
+    const tasks = await Task.findAll({ where: { user_id: req.auth.userId } });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -755,7 +726,7 @@ app.get('/tasks/search', requireAuth, async (req, res) => {
     const { Task } = await getModelsForReq(req);
     const tasks = await Task.findAll({
       where: {
-        user_id: req.session.userId,
+        user_id: req.auth.userId,
         title: { [Op.iLike]: `${q}%` },
       },
     });
@@ -770,7 +741,7 @@ app.get('/tasks/:id', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
     const task = await Task.findOne({
-      where: { id: req.params.id, user_id: req.session.userId },
+      where: { id: req.params.id, user_id: req.auth.userId },
     });
     if (!task) {
       return res.status(404).json({ error: 'Не нашлась задача' });
@@ -803,7 +774,7 @@ app.post('/tasks', requireAuth, async (req, res) => {
     }
 
     const task = await Task.create({
-      user_id: req.session.userId,
+      user_id: req.auth.userId,
       title,
       text,
       stat: resolvedColumn ? resolvedColumn.name : stat,
@@ -834,7 +805,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
   try {
     const { Task, Column } = await getModelsForReq(req);
     const task = await Task.findOne({
-      where: { id: req.params.id, user_id: req.session.userId },
+      where: { id: req.params.id, user_id: req.auth.userId },
     });
     if (!task) {
       return res.status(404).json({ error: 'Не найдена задача' });
@@ -884,7 +855,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
 app.get('/', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
-    const tasks = await Task.findAll({ where: { user_id: req.session.userId } });
+    const tasks = await Task.findAll({ where: { user_id: req.auth.userId } });
     res.json(tasks);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -894,7 +865,7 @@ app.get('/', requireAuth, async (req, res) => {
 // Фильтрация задач по приоритету/статусу/пользователю
 app.get('/tasks/filter', requireAuth, async (req, res) => {
   const { priority, stat, userId, columnId, projectId } = req.query;
-  const targetUserId = userId ? Number(userId) : req.session.userId;
+  const targetUserId = userId ? Number(userId) : req.auth.userId;
   if (Number.isNaN(targetUserId)) {
     return res.status(400).json({ error: 'Некорректный userId' });
   }
@@ -976,7 +947,7 @@ app.get('/columns', requireAuth, async (req, res) => {
       include: [{
         model: Task,
         required: false,
-        where: { user_id: req.session.userId, ...(projectId !== undefined ? { project_id: projectId } : {}) },
+        where: { user_id: req.auth.userId, ...(projectId !== undefined ? { project_id: projectId } : {}) },
       }],
       order: [['id', 'ASC']],
     });
@@ -1016,7 +987,7 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
     const deleted = await Task.destroy({
-      where: { id: req.params.id, user_id: req.session.userId },
+      where: { id: req.params.id, user_id: req.auth.userId },
     });
     if (!deleted) {
       return res.status(404).json({ error: 'Не найдена задача' });
