@@ -8,6 +8,9 @@ export type KanbanCard = {
   description?: string;
   tags: string[];
   priority: Priority;
+  plannedDate?: string;
+  durationWeeks: number;
+  durationDays: number;
   assignee?: { name: string; initials: string };
 };
 

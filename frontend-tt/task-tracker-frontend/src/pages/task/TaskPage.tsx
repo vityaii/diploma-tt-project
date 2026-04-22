@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { KanbanBoard, KanbanCard, Priority } from "../kanban/kanban.types";
 import { formatTaskKey } from "../kanban/kanban.constants";
+import { normalizeWeekDayDuration } from "../kanban/planning";
 import { SessionControls } from "../../components/SessionControls";
 
 type Props = {
@@ -17,6 +18,9 @@ type Props = {
       description: string;
       tags: string[];
       priority: Priority;
+      plannedDate: string;
+      durationWeeks: number;
+      durationDays: number;
     },
   ) => string;
   onBack: () => void;
@@ -53,6 +57,9 @@ export function TaskPage({
         description: "",
         tags: [],
         priority: "Medium",
+        plannedDate: "",
+        durationWeeks: 0,
+        durationDays: 0,
       } satisfies KanbanCard;
     }
     return board.cards[taskId];
@@ -63,6 +70,9 @@ export function TaskPage({
   const [assigneeName, setAssigneeName] = useState(initialTask?.assignee?.name ?? "Unassigned");
   const [description, setDescription] = useState(initialTask?.description ?? "");
   const [priority, setPriority] = useState<Priority>(initialTask?.priority ?? "Medium");
+  const [plannedDate, setPlannedDate] = useState(initialTask?.plannedDate ?? "");
+  const [durationWeeks, setDurationWeeks] = useState(initialTask?.durationWeeks ?? 0);
+  const [durationDays, setDurationDays] = useState(initialTask?.durationDays ?? 0);
   const [tags, setTags] = useState<string[]>(initialTask?.tags ?? []);
   const [tagInput, setTagInput] = useState("");
   const [justSaved, setJustSaved] = useState(false);
@@ -74,6 +84,9 @@ export function TaskPage({
     setAssigneeName(initialTask.assignee?.name ?? "Unassigned");
     setDescription(initialTask.description ?? "");
     setPriority(initialTask.priority ?? "Medium");
+    setPlannedDate(initialTask.plannedDate ?? "");
+    setDurationWeeks(initialTask.durationWeeks ?? 0);
+    setDurationDays(initialTask.durationDays ?? 0);
     setTags(initialTask.tags ?? []);
     setTagInput("");
     setJustSaved(false);
@@ -196,6 +209,42 @@ export function TaskPage({
               </div>
 
               <div>
+                <div className="text-xs font-medium text-neutral-500">Planned date</div>
+                <input
+                  type="date"
+                  value={plannedDate}
+                  onChange={(e) => setPlannedDate(e.target.value)}
+                  className="mt-1 h-11 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <div className="text-xs font-medium text-neutral-500">Duration</div>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={durationWeeks}
+                    onChange={(e) => setDurationWeeks(Math.max(0, Number(e.target.value) || 0))}
+                    className="h-11 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
+                    placeholder="Weeks"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={durationDays}
+                    onChange={(e) => setDurationDays(Math.max(0, Number(e.target.value) || 0))}
+                    className="h-11 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
+                    placeholder="Days"
+                  />
+                </div>
+              </div>
+
+              <div>
                 <div className="text-xs font-medium text-neutral-500">Tags</div>
                 <div className="mt-1 flex min-h-11 flex-wrap items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
                   {tags.length === 0 ? (
@@ -276,12 +325,14 @@ export function TaskPage({
                   type="button"
                   onClick={() => {
                     const savedId = onSaveTask(taskId, {
+                      ...normalizeWeekDayDuration(durationWeeks, durationDays),
                       title,
                       customerName,
                       assigneeName: assigneeName === "Unassigned" ? "" : assigneeName,
                       description,
                       tags,
                       priority,
+                      plannedDate,
                     });
 
                     setJustSaved(true);

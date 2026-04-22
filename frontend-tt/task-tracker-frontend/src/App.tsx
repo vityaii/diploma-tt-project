@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AuthPage } from "./pages/auth/AuthPage";
+import { GanttPage } from "./pages/gantt/GanttPage";
 import { KanbanPage } from "./pages/kanban/KanbanPage";
 import type { KanbanBoard, KanbanCard, Priority } from "./pages/kanban/kanban.types";
+import { normalizeWeekDayDuration } from "./pages/kanban/planning";
 import { TaskPage } from "./pages/task/TaskPage";
 import { ProjectsPage } from "./pages/projects/ProjectsPage";
 import { authApi, UnauthorizedError, type AuthSession } from "./api/client";
@@ -216,13 +218,17 @@ export default function App() {
   }, [authReady, authSession, handleUnauthorized]);
 
   const projectTaskMatch = hash.match(/^#\/project\/(\d+)\/task\/([^/]+)$/);
+  const projectGanttMatch = hash.match(/^#\/project\/(\d+)\/gantt$/);
   const projectMatch = hash.match(/^#\/project\/(\d+)$/);
   const activeProjectId = projectTaskMatch
     ? Number(projectTaskMatch[1])
+    : projectGanttMatch
+      ? Number(projectGanttMatch[1])
     : projectMatch
       ? Number(projectMatch[1])
       : null;
   const activeTaskId = projectTaskMatch ? decodeURIComponent(projectTaskMatch[2]) : null;
+  const isGanttRoute = Boolean(projectGanttMatch);
 
   useEffect(() => {
     if (!authSession || !activeProjectId || Number.isNaN(activeProjectId)) return;
@@ -283,6 +289,9 @@ export default function App() {
       description: string;
       tags: string[];
       priority: Priority;
+      plannedDate: string;
+      durationWeeks: number;
+      durationDays: number;
     };
 
     return (taskId: string, draft: Draft) => {
@@ -294,6 +303,7 @@ export default function App() {
             .slice(0, 12),
         ),
       );
+      const planning = normalizeWeekDayDuration(draft.durationWeeks, draft.durationDays);
 
       if (taskId === "new") {
         const taskNumber = nextTaskNumberRef.current;
@@ -320,6 +330,9 @@ export default function App() {
             description: draft.description.trim(),
             tags: normalizedTags,
             priority: draft.priority,
+            plannedDate: draft.plannedDate || undefined,
+            durationWeeks: planning.durationWeeks,
+            durationDays: planning.durationDays,
             assignee: draft.assigneeName.trim()
               ? { name: draft.assigneeName.trim(), initials: makeInitials(draft.assigneeName) }
               : undefined,
@@ -345,6 +358,9 @@ export default function App() {
           description: draft.description.trim(),
           tags: normalizedTags,
           priority: draft.priority,
+          plannedDate: draft.plannedDate || undefined,
+          durationWeeks: planning.durationWeeks,
+          durationDays: planning.durationDays,
           assignee: draft.assigneeName.trim()
             ? { name: draft.assigneeName.trim(), initials: makeInitials(draft.assigneeName) }
             : undefined,
@@ -417,6 +433,22 @@ export default function App() {
       return <FullScreenMessage message="Project not found." />;
     }
 
+    if (isGanttRoute) {
+      return (
+        <GanttPage
+          board={board}
+          projectName={currentProject?.name ?? "Project"}
+          projectTheme={currentProject?.theme ?? ""}
+          username={authSession.username}
+          logoutPending={logoutPending}
+          onOpenProjects={() => setHash("#/")}
+          onOpenBoard={() => setHash(`#/project/${activeProjectId}`)}
+          onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
+          onLogout={handleLogout}
+        />
+      );
+    }
+
     return (
       <KanbanPage
         board={board}
@@ -427,6 +459,7 @@ export default function App() {
         currentUser={authSession.username}
         logoutPending={logoutPending}
         onOpenProjects={() => setHash("#/")}
+        onOpenGantt={() => setHash(`#/project/${activeProjectId}/gantt`)}
         onLogout={handleLogout}
       />
     );

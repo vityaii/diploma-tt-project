@@ -9,6 +9,7 @@ type Props = {
   onSearchQueryChange: (value: string) => void;
   onToggleFilters: () => void;
   onOpenProjects: () => void;
+  onOpenGantt: () => void;
   onAddColumn: () => void;
   onNewTask: () => void;
   onLogout: () => void;
@@ -23,6 +24,7 @@ export function BoardHeader({
   onSearchQueryChange,
   onToggleFilters,
   onOpenProjects,
+  onOpenGantt,
   onAddColumn,
   onNewTask,
   onLogout,
@@ -82,6 +84,20 @@ export function BoardHeader({
             />
           </svg>
           Filters
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenGantt}
+          className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-neutral-500">
+            <path
+              fill="currentColor"
+              d="M4 18h16v2H4zm1-3h3V8H5zm5 0h4V4h-4zm6 0h3v-6h-3z"
+            />
+          </svg>
+          Gantt
         </button>
 
         <button

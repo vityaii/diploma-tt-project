@@ -193,6 +193,20 @@ function defineModels(sequelizeInstance) {
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    planned_date: {
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
+    duration_weeks: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    duration_days: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
     tags: {
       type: DataTypes.JSONB,
       allowNull: false,
@@ -309,6 +323,82 @@ async function getOrCreateDefaultProjectId(sequelize) {
   return cachedDefaultProjectId;
 }
 
+function normalizeDateOnly(value) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function coerceNonNegativeInteger(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizePlanningValues(input) {
+  const plannedDate = normalizeDateOnly(input?.plannedDate ?? input?.planned_date);
+  const totalDays =
+    coerceNonNegativeInteger(input?.durationWeeks ?? input?.duration_weeks) * 7 +
+    coerceNonNegativeInteger(input?.durationDays ?? input?.duration_days);
+
+  return {
+    plannedDate,
+    durationWeeks: Math.floor(totalDays / 7),
+    durationDays: totalDays % 7,
+  };
+}
+
+function parsePlanningPayload(body, base = {}) {
+  const provided =
+    body?.plannedDate !== undefined ||
+    body?.planned_date !== undefined ||
+    body?.durationWeeks !== undefined ||
+    body?.duration_weeks !== undefined ||
+    body?.durationDays !== undefined ||
+    body?.duration_days !== undefined;
+
+  if (!provided) return { provided: false };
+
+  const rawPlannedDate = body?.plannedDate ?? body?.planned_date;
+  if (
+    rawPlannedDate !== undefined &&
+    rawPlannedDate !== null &&
+    String(rawPlannedDate).trim() !== '' &&
+    !normalizeDateOnly(rawPlannedDate)
+  ) {
+    return { error: 'Некорректный plannedDate. Используйте YYYY-MM-DD' };
+  }
+
+  for (const [key, value] of [
+    ['durationWeeks', body?.durationWeeks ?? body?.duration_weeks],
+    ['durationDays', body?.durationDays ?? body?.duration_days],
+  ]) {
+    if (value === undefined || value === null || value === '') continue;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return { error: `Некорректный ${key}` };
+    }
+  }
+
+  const merged = {
+    plannedDate:
+      rawPlannedDate !== undefined
+        ? rawPlannedDate
+        : (base.plannedDate ?? base.planned_date),
+    durationWeeks:
+      body?.durationWeeks ?? body?.duration_weeks ?? base.durationWeeks ?? base.duration_weeks,
+    durationDays:
+      body?.durationDays ?? body?.duration_days ?? base.durationDays ?? base.duration_days,
+  };
+
+  return {
+    provided: true,
+    ...normalizePlanningValues(merged),
+  };
+}
+
 async function syncBoardToTables(sequelize, board, projectId) {
   const { Column, Task } = sequelize.models;
   const normalizedProjectId = Number(projectId);
@@ -377,6 +467,7 @@ async function syncBoardToTables(sequelize, board, projectId) {
       const assigneeName = String(card.assignee?.name ?? '').trim();
       const assigneeInitials = String(card.assignee?.initials ?? '').trim();
       const tags = Array.isArray(card.tags) ? card.tags : [];
+      const planning = normalizePlanningValues(card);
 
       const update = {
         user_id: userId,
@@ -392,6 +483,9 @@ async function syncBoardToTables(sequelize, board, projectId) {
         customer_name: customerName || null,
         assignee_name: assigneeName || null,
         assignee_initials: assigneeInitials || null,
+        planned_date: planning.plannedDate,
+        duration_weeks: planning.durationWeeks,
+        duration_days: planning.durationDays,
         tags,
       };
 
@@ -473,6 +567,9 @@ async function buildBoardFromTables(sequelize, projectId) {
       description: t.text ?? '',
       tags: Array.isArray(t.tags) ? t.tags : [],
       priority: t.priority || 'Medium',
+      plannedDate: t.planned_date ?? undefined,
+      durationWeeks: Number.isFinite(Number(t.duration_weeks)) ? Number(t.duration_weeks) : 0,
+      durationDays: Number.isFinite(Number(t.duration_days)) ? Number(t.duration_days) : 0,
       assignee: t.assignee_name
         ? { name: t.assignee_name, initials: t.assignee_initials || t.assignee_name.slice(0, 2).toUpperCase() }
         : undefined,
@@ -754,7 +851,14 @@ app.get('/tasks/:id', requireAuth, async (req, res) => {
 
 // создать таску
 app.post('/tasks', requireAuth, async (req, res) => {
-  const { title, text = '', stat = 'Создана', priority = 'normal', columnId, projectId } = req.body;
+  const {
+    title,
+    text = '',
+    stat = 'Создана',
+    priority = 'normal',
+    columnId,
+    projectId,
+  } = req.body;
   if (!title) {
     return res.status(400).json({ error: 'Необходимо указать title' });
   }
@@ -764,6 +868,11 @@ app.post('/tasks', requireAuth, async (req, res) => {
     const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
     if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
       return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+
+    const planning = parsePlanningPayload(req.body);
+    if (planning.error) {
+      return res.status(400).json({ error: planning.error });
     }
 
     let resolvedColumn = null;
@@ -781,6 +890,9 @@ app.post('/tasks', requireAuth, async (req, res) => {
       priority,
       column_id: resolvedColumn ? resolvedColumn.id : null,
       project_id: resolvedProjectId ?? null,
+      planned_date: planning.provided ? planning.plannedDate : null,
+      duration_weeks: planning.provided ? planning.durationWeeks : 0,
+      duration_days: planning.provided ? planning.durationDays : 0,
     });
     res.status(201).json(task);
   } catch (err) {
@@ -797,7 +909,13 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
     stat === undefined &&
     priority === undefined &&
     columnId === undefined &&
-    projectId === undefined
+    projectId === undefined &&
+    req.body.plannedDate === undefined &&
+    req.body.durationWeeks === undefined &&
+    req.body.durationDays === undefined &&
+    req.body.planned_date === undefined &&
+    req.body.duration_weeks === undefined &&
+    req.body.duration_days === undefined
   ) {
     return res.status(400).json({ error: 'Нечего обновлять' });
   }
@@ -814,6 +932,15 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
     const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
     if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
       return res.status(400).json({ error: 'Некорректный projectId' });
+    }
+
+    const planning = parsePlanningPayload(req.body, {
+      plannedDate: task.planned_date,
+      durationWeeks: task.duration_weeks,
+      durationDays: task.duration_days,
+    });
+    if (planning.error) {
+      return res.status(400).json({ error: planning.error });
     }
 
     let resolvedColumn = null;
@@ -842,6 +969,12 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
 
     if (resolvedProjectId !== undefined) {
       task.project_id = resolvedProjectId;
+    }
+
+    if (planning.provided) {
+      task.planned_date = planning.plannedDate;
+      task.duration_weeks = planning.durationWeeks;
+      task.duration_days = planning.durationDays;
     }
 
     await task.save();

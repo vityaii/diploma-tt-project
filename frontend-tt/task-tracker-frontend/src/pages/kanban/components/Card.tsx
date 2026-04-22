@@ -4,6 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { dndIds } from "../kanban.dnd";
 import { formatTaskKey } from "../kanban.constants";
+import { formatPlannedDate, formatTaskDuration } from "../planning";
 
 function priorityBadge(priority: KanbanCard["priority"]) {
   const base = "whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium";
@@ -57,6 +58,21 @@ export const Card = forwardRef<
               {t}
             </span>
           ))}
+        </div>
+      )}
+
+      {(card.plannedDate || card.durationWeeks > 0 || card.durationDays > 0) && (
+        <div className="mt-2 flex flex-wrap gap-2 text-xs text-neutral-500">
+          {card.plannedDate && (
+            <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5">
+              {formatPlannedDate(card.plannedDate)}
+            </span>
+          )}
+          {formatTaskDuration(card) && (
+            <span className="rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5">
+              {formatTaskDuration(card)}
+            </span>
+          )}
         </div>
       )}
 

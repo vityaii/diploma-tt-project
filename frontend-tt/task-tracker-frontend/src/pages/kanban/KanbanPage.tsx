@@ -16,6 +16,7 @@ type Props = {
   currentUser: string;
   logoutPending?: boolean;
   onOpenProjects: () => void;
+  onOpenGantt: () => void;
   onLogout: () => void;
 };
 
@@ -35,6 +36,7 @@ export function KanbanPage({
   currentUser,
   logoutPending = false,
   onOpenProjects,
+  onOpenGantt,
   onLogout,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -62,6 +64,7 @@ export function KanbanPage({
         formatTaskKey(card.taskNumber),
         card.title,
         card.description ?? "",
+        card.plannedDate ?? "",
         card.customer?.name ?? "",
         card.assignee?.name ?? "",
         ...(card.tags ?? []),
@@ -86,6 +89,7 @@ export function KanbanPage({
           onSearchQueryChange={setSearchQuery}
           onToggleFilters={() => setFiltersOpen((v) => !v)}
           onOpenProjects={onOpenProjects}
+          onOpenGantt={onOpenGantt}
           onAddColumn={() => {
             const title = window.prompt("Column title");
             if (!title) return;
