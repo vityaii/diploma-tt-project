@@ -12,7 +12,7 @@ type Props = {
 
 const featureCards = [
   {
-    title: "Project-first workflow",
+    title: "Проектно-ориентированный подход",
     text: "Switch between projects, keep the board structure intact, and work from one consistent interface.",
   },
   {
