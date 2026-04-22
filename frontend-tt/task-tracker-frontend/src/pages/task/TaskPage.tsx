@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { KanbanBoard, KanbanCard, Priority } from "../kanban/kanban.types";
 import { formatTaskKey } from "../kanban/kanban.constants";
+import { SessionControls } from "../../components/SessionControls";
 
 type Props = {
   taskId: string;
   board: KanbanBoard;
+  username: string;
+  logoutPending?: boolean;
   onSaveTask: (
     taskId: string,
     draft: {
@@ -19,6 +22,7 @@ type Props = {
   onBack: () => void;
   onOpenTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
+  onLogout: () => void;
 };
 
 function priorityBadge(priority: KanbanCard["priority"]) {
@@ -28,7 +32,17 @@ function priorityBadge(priority: KanbanCard["priority"]) {
   return `${base} border-emerald-200 bg-emerald-50 text-emerald-700`;
 }
 
-export function TaskPage({ taskId, board, onSaveTask, onBack, onOpenTask, onDeleteTask }: Props) {
+export function TaskPage({
+  taskId,
+  board,
+  username,
+  logoutPending = false,
+  onSaveTask,
+  onBack,
+  onOpenTask,
+  onDeleteTask,
+  onLogout,
+}: Props) {
   const initialTask = useMemo(() => {
     if (taskId === "new") {
       return {
@@ -103,22 +117,26 @@ export function TaskPage({ taskId, board, onSaveTask, onBack, onOpenTask, onDele
     <div className="min-h-screen bg-neutral-100">
       <div className="mx-auto max-w-[980px] px-6 py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
-          >
-            <span aria-hidden="true">←</span>
-            Back
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+            >
+              <span aria-hidden="true">←</span>
+              Back
+            </button>
 
-          <div className="flex items-center gap-2">
             {taskId !== "new" && (
               <span className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 shadow-sm">
                 {formatTaskKey(initialTask.taskNumber)}
               </span>
             )}
             <span className={priorityBadge(priority)}>{priority}</span>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <SessionControls username={username} onLogout={onLogout} disabled={logoutPending} />
           </div>
         </div>
 

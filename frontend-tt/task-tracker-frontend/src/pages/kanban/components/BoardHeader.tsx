@@ -1,23 +1,31 @@
+import { SessionControls } from "../../../components/SessionControls";
+
 type Props = {
   title: string;
   subtitle?: string;
+  username: string;
+  logoutPending?: boolean;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
   onToggleFilters: () => void;
   onOpenProjects: () => void;
   onAddColumn: () => void;
   onNewTask: () => void;
+  onLogout: () => void;
 };
 
 export function BoardHeader({
   title,
   subtitle,
+  username,
+  logoutPending = false,
   searchQuery,
   onSearchQueryChange,
   onToggleFilters,
   onOpenProjects,
   onAddColumn,
   onNewTask,
+  onLogout,
 }: Props) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -26,7 +34,9 @@ export function BoardHeader({
         <p className="mt-0.5 text-sm text-neutral-500">{subtitle || "Kanban board"}</p>
       </div>
 
-      <div className="flex flex-1 items-center justify-end gap-2">
+      <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+        <SessionControls username={username} onLogout={onLogout} disabled={logoutPending} />
+
         <div className="relative w-full max-w-[320px]">
           <svg
             aria-hidden="true"

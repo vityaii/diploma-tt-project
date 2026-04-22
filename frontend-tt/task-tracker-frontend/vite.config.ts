@@ -10,6 +10,26 @@ export default defineConfig({
         target: 'http://localhost:7070',
         changeOrigin: true,
       },
+      '/login': {
+        target: 'http://localhost:7070',
+        changeOrigin: true,
+      },
+      '/register': {
+        target: 'http://localhost:7070',
+        changeOrigin: true,
+      },
+      '/refresh': {
+        target: 'http://localhost:7070',
+        changeOrigin: true,
+      },
+      '/logout': {
+        target: 'http://localhost:7070',
+        changeOrigin: true,
+      },
+      '/tasks': {
+        target: 'http://localhost:7070',
+        changeOrigin: true,
+      },
     },
   },
 })

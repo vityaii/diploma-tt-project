@@ -517,7 +517,7 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/projects', async (req, res) => {
+app.get('/api/projects', requireAuth, async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
     const { Project } = sequelize.models;
@@ -528,7 +528,7 @@ app.get('/api/projects', async (req, res) => {
   }
 });
 
-app.post('/api/projects', async (req, res) => {
+app.post('/api/projects', requireAuth, async (req, res) => {
   const name = String(req.body?.name ?? '').trim();
   const theme = String(req.body?.theme ?? '').trim();
   if (!name) {
@@ -548,7 +548,7 @@ app.post('/api/projects', async (req, res) => {
   }
 });
 
-app.get('/api/projects/:projectId/board', async (req, res) => {
+app.get('/api/projects/:projectId/board', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId);
   if (!Number.isFinite(projectId)) {
     return res.status(400).json({ error: 'Некорректный projectId' });
@@ -576,7 +576,7 @@ app.get('/api/projects/:projectId/board', async (req, res) => {
   }
 });
 
-app.put('/api/projects/:projectId/board', async (req, res) => {
+app.put('/api/projects/:projectId/board', requireAuth, async (req, res) => {
   const projectId = Number(req.params.projectId);
   if (!Number.isFinite(projectId)) {
     return res.status(400).json({ error: 'Некорректный projectId' });

@@ -13,7 +13,10 @@ type Props = {
   onOpenTask?: (taskId: string) => void;
   projectName: string;
   projectTheme: string;
+  currentUser: string;
+  logoutPending?: boolean;
   onOpenProjects: () => void;
+  onLogout: () => void;
 };
 
 function findColumnIdByCardId(board: KanbanBoard, cardId: string) {
@@ -29,7 +32,10 @@ export function KanbanPage({
   onOpenTask,
   projectName,
   projectTheme,
+  currentUser,
+  logoutPending = false,
   onOpenProjects,
+  onLogout,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -74,6 +80,8 @@ export function KanbanPage({
         <BoardHeader
           title={projectName}
           subtitle={projectTheme || "Kanban board"}
+          username={currentUser}
+          logoutPending={logoutPending}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
           onToggleFilters={() => setFiltersOpen((v) => !v)}
@@ -96,6 +104,7 @@ export function KanbanPage({
             }));
           }}
           onNewTask={() => onOpenTask?.("new")}
+          onLogout={onLogout}
         />
 
         {filtersOpen && (

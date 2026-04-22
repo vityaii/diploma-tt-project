@@ -1,14 +1,26 @@
 import { useState } from "react";
 import type { Project } from "../../api/ttApi";
+import { SessionControls } from "../../components/SessionControls";
 
 type Props = {
   projects: Project[];
   loading: boolean;
+  currentUser: string;
+  logoutPending?: boolean;
   onCreateProject: (input: { name: string; theme: string }) => Promise<Project | null>;
   onOpenProject: (projectId: number) => void;
+  onLogout: () => void;
 };
 
-export function ProjectsPage({ projects, loading, onCreateProject, onOpenProject }: Props) {
+export function ProjectsPage({
+  projects,
+  loading,
+  currentUser,
+  logoutPending = false,
+  onCreateProject,
+  onOpenProject,
+  onLogout,
+}: Props) {
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
   const [theme, setTheme] = useState("");
@@ -57,7 +69,13 @@ export function ProjectsPage({ projects, loading, onCreateProject, onOpenProject
             <p className="mt-0.5 text-sm text-neutral-500">Choose a project or create a new one.</p>
           </div>
 
-          <div className="flex flex-1 items-center justify-end gap-2">
+          <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+            <SessionControls
+              username={currentUser}
+              onLogout={onLogout}
+              disabled={logoutPending}
+            />
+
             <div className="relative w-full max-w-[320px]">
               <svg
                 aria-hidden="true"
