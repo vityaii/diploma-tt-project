@@ -13,15 +13,15 @@ type Props = {
 const featureCards = [
   {
     title: "Проектно-ориентированный подход",
-    text: "Switch between projects, keep the board structure intact, and work from one consistent interface.",
+    text: "Переключайтесь между досками, сохраняя индивидуальные настройки и состояние для каждой из них.",
   },
   {
-    title: "Backend-backed state",
-    text: "Authentication is now tied to the server contract, with stored session data and token refresh handling.",
+    title: "Диаграмса Ганта",
+    text: "Позволяет видеть проекты на календаре, что обеспечивает прозрачное наблюдение загруженности и сроков",
   },
   {
-    title: "Focused interactions",
-    text: "Search, filters, drag-and-drop and task editing stay available right after sign-in.",
+    title: "Удобство пользования",
+    text: "Поиск, фильтры, перетаскивание карточек и другие функции обеспечивают комфортный опыт работы.",
   },
 ];
 
@@ -33,7 +33,7 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
   const [localError, setLocalError] = useState<string | null>(null);
 
   const title = useMemo(
-    () => (mode === "login" ? "Sign in to continue" : "Create your workspace access"),
+    () => (mode === "login" ? "Войдите чтобы продолжить" : "Зарегистрируйтесь чтобы продолжить"),
     [mode],
   );
 
@@ -42,17 +42,17 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
 
     const trimmedUsername = username.trim();
     if (trimmedUsername.length < 3) {
-      setLocalError("Username must be at least 3 characters.");
+      setLocalError("Имя пользователя должно быть не менее 3 символов.");
       return;
     }
 
     if (password.length < 6) {
-      setLocalError("Password must be at least 6 characters.");
+      setLocalError("Пароль должен быть не менее 6 символов.");
       return;
     }
 
     if (mode === "register" && password !== confirmPassword) {
-      setLocalError("Passwords do not match.");
+      setLocalError("Пароли не совпадают.");
       return;
     }
 
@@ -83,12 +83,11 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                 </div>
 
                 <h1 className="mt-6 max-w-[12ch] text-4xl font-semibold tracking-tight text-white md:text-5xl">
-                  Workboards with access control.
+                  Task Tracker
                 </h1>
 
                 <p className="mt-4 max-w-[58ch] text-sm leading-6 text-white/70 md:text-base">
-                  The frontend now uses backend authentication. Sign in once, keep the board
-                  state in sync, and continue working from the same interface.
+                  Войдите или зарегистрируйтесь, чтобы начать использовать Task Tracker — инструмент для управления задачами и проектами. Task Tracker поможет вам организовать рабочий процесс, улучшить коммуникацию в команде и повысить продуктивность.
                 </p>
               </div>
 
@@ -117,7 +116,7 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                 </h2>
               </div>
 
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-1">
+              <div className="inline-flex shrink-0 items-stretch rounded-2xl border border-neutral-200 bg-neutral-50 p-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -126,11 +125,11 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                   }}
                   className={
                     mode === "login"
-                      ? "rounded-xl bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm"
-                      : "rounded-xl px-3 py-2 text-sm font-medium text-neutral-600"
+                      ? "inline-flex min-w-[96px] items-center justify-center rounded-xl bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm"
+                      : "inline-flex min-w-[96px] items-center justify-center rounded-xl px-3 py-2 text-sm font-medium text-neutral-600"
                   }
                 >
-                  Sign in
+                  Войти
                 </button>
                 <button
                   type="button"
@@ -140,11 +139,11 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                   }}
                   className={
                     mode === "register"
-                      ? "rounded-xl bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm"
-                      : "rounded-xl px-3 py-2 text-sm font-medium text-neutral-600"
+                      ? "inline-flex min-w-[96px] items-center justify-center rounded-xl bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm"
+                      : "inline-flex min-w-[96px] items-center justify-center rounded-xl px-3 py-2 text-sm font-medium text-neutral-600"
                   }
                 >
-                  Register
+                  Зарегестрироваться
                 </button>
               </div>
             </div>
@@ -164,20 +163,20 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
               <div>
                 <div className="text-xs font-medium uppercase tracking-[0.2em] text-neutral-400">
-                  Username
+                  Имя пользователя
                 </div>
                 <input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
                   className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
-                  placeholder="e.g. teamlead_01"
+                  placeholder="teamlead_01"
                 />
               </div>
 
               <div>
                 <div className="text-xs font-medium uppercase tracking-[0.2em] text-neutral-400">
-                  Password
+                  Пароль
                 </div>
                 <input
                   type="password"
@@ -185,14 +184,14 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                   className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
-                  placeholder="At least 6 characters"
+                  placeholder="Минимум 6 символов"
                 />
               </div>
 
               {mode === "register" && (
                 <div>
                   <div className="text-xs font-medium uppercase tracking-[0.2em] text-neutral-400">
-                    Confirm password
+                    Подтвердите пароль
                   </div>
                   <input
                     type="password"
@@ -200,14 +199,13 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     autoComplete="new-password"
                     className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-4 text-sm text-neutral-900 shadow-sm outline-none focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
-                    placeholder="Repeat the password"
+                    placeholder="Повторите пароль"
                   />
                 </div>
               )}
 
               <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-neutral-600">
-                Backend validation expects latin letters, digits, or `_` in the username.
-                Tokens are stored locally and refreshed automatically when possible.
+                Имя пользователя должно содержать латинские буквы, цифры или символ `_`.
               </div>
 
               <button
