@@ -3,7 +3,7 @@ info:
   title: Task Tracker API
   version: 0.1.0
   description: |
-    HTTP API для прототипа. Авторизация через cookie-сессию (connect.sid).
+    HTTP API для сервиса управления проектами и задачами. Авторизация через JWT (access_token).
 servers:
   - url: http://localhost:7070
 components:
