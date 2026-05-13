@@ -274,53 +274,46 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 app.use(authRouter); // /register, /login, /change-password, /logout
 
-let cachedApiUserId = null;
-let cachedDefaultProjectId = null;
 
-async function getOrCreateApiUserId(sequelize) {
-  if (cachedApiUserId) return cachedApiUserId;
-  const { User } = sequelize.models;
-  let user = await User.findOne({ order: [['id', 'ASC']] });
-  if (user) {
-    cachedApiUserId = user.id;
-    return cachedApiUserId;
-  }
+const DEFAULT_BOARD_COLUMNS = [
+  { id: 'todo', title: 'To Do' },
+  { id: 'inprogress', title: 'In Progress' },
+  { id: 'review', title: 'Review' },
+  { id: 'done', title: 'Done' },
+];
 
-  const suffix = Math.random().toString(16).slice(2, 8);
-  user = await User.create({
-    username: `demo_${suffix}`,
-    password_hash: `demo_${suffix}`,
-  });
-  cachedApiUserId = user.id;
-  return cachedApiUserId;
+function isPositiveIntLike(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
 }
 
-async function getOrCreateDefaultProjectId(sequelize) {
-  if (cachedDefaultProjectId) return cachedDefaultProjectId;
-  const { Project, Column, Task, BoardState } = sequelize.models;
-  let project = await Project.findOne({ order: [['id', 'ASC']] });
-  if (!project) {
-    project = await Project.create({ name: 'Default Project', theme: 'General' });
-  }
-  cachedDefaultProjectId = project.id;
+function normalizePriorityForStorage(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'low') return 'low';
+  if (normalized === 'high') return 'high';
+  if (normalized === 'medium' || normalized === 'normal') return 'medium';
+  return 'medium';
+}
 
-  const projectCount = await Project.count();
-  if (projectCount === 1) {
-    await Column.update(
-      { project_id: cachedDefaultProjectId },
-      { where: { project_id: { [Op.is]: null } } },
-    );
-    await Task.update(
-      { project_id: cachedDefaultProjectId },
-      { where: { project_id: { [Op.is]: null } } },
-    );
-    await BoardState.update(
-      { project_id: cachedDefaultProjectId },
-      { where: { project_id: { [Op.is]: null } } },
-    );
-  }
+function normalizePriorityForBoard(value) {
+  const normalized = normalizePriorityForStorage(value);
+  if (normalized === 'low') return 'Low';
+  if (normalized === 'high') return 'High';
+  return 'Medium';
+}
 
-  return cachedDefaultProjectId;
+function normalizeNullableText(value) {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeTags(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((tag) => String(tag ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 function normalizeDateOnly(value) {
@@ -399,123 +392,255 @@ function parsePlanningPayload(body, base = {}) {
   };
 }
 
-async function syncBoardToTables(sequelize, board, projectId) {
+async function ensureProjectExists(Project, projectId, transaction) {
+  const project = await Project.findByPk(projectId, { transaction });
+  if (!project) {
+    const err = new Error('Проект не найден');
+    err.status = 404;
+    throw err;
+  }
+  return project;
+}
+
+async function ensureDefaultColumnsForProject(Column, projectId, transaction) {
+  const count = await Column.count({
+    where: { project_id: projectId },
+    transaction,
+  });
+  if (count > 0) return;
+
+  for (let index = 0; index < DEFAULT_BOARD_COLUMNS.length; index += 1) {
+    const entry = DEFAULT_BOARD_COLUMNS[index];
+    await Column.create({
+      project_id: projectId,
+      client_id: entry.id,
+      name: entry.title,
+      position: index,
+    }, { transaction });
+  }
+}
+
+function cardIdFromTask(task) {
+  return task.client_id ? String(task.client_id) : String(task.id);
+}
+
+function mapTaskToBoardCard(task) {
+  return {
+    id: cardIdFromTask(task),
+    taskNumber: isPositiveIntLike(task.task_number) ? Number(task.task_number) : Number(task.id),
+    title: task.title,
+    customer: task.customer_name ? { name: task.customer_name } : undefined,
+    description: task.text ?? '',
+    tags: normalizeTags(task.tags),
+    priority: normalizePriorityForBoard(task.priority),
+    plannedDate: task.planned_date ?? undefined,
+    durationWeeks: Number.isFinite(Number(task.duration_weeks)) ? Number(task.duration_weeks) : 0,
+    durationDays: Number.isFinite(Number(task.duration_days)) ? Number(task.duration_days) : 0,
+    assignee: task.assignee_name
+      ? {
+        name: task.assignee_name,
+        initials: task.assignee_initials || task.assignee_name.slice(0, 2).toUpperCase(),
+      }
+      : undefined,
+  };
+}
+
+async function getNextTaskNumber(Task, projectId, transaction) {
+  const [maxTaskNumber, maxTaskId] = await Promise.all([
+    Task.max('task_number', {
+      where: { project_id: projectId },
+      transaction,
+    }),
+    Task.max('id', {
+      where: { project_id: projectId },
+      transaction,
+    }),
+  ]);
+  const maxTaskNumberValue = Number.isFinite(Number(maxTaskNumber)) ? Number(maxTaskNumber) : 0;
+  const maxTaskIdValue = Number.isFinite(Number(maxTaskId)) ? Number(maxTaskId) : 0;
+  return Math.max(maxTaskNumberValue, maxTaskIdValue) + 1;
+}
+
+async function getNextTaskPosition(Task, projectId, columnId, transaction) {
+  const maxPosition = await Task.max('position', {
+    where: { project_id: projectId, column_id: columnId },
+    transaction,
+  });
+  return Number.isFinite(Number(maxPosition)) ? Number(maxPosition) + 1 : 0;
+}
+
+async function syncBoardToTables(sequelize, board, projectId, userId) {
   const { Column, Task } = sequelize.models;
   const normalizedProjectId = Number(projectId);
   if (!Number.isFinite(normalizedProjectId)) {
     throw new Error('Invalid projectId for board sync');
   }
-  const userId = await getOrCreateApiUserId(sequelize);
+  const normalizedUserId = Number(userId);
+  if (!Number.isFinite(normalizedUserId)) {
+    throw new Error('Invalid userId for board sync');
+  }
 
-  const columnOrder = Array.isArray(board.columns) ? board.columns : [];
-  const cards = board.cards && typeof board.cards === 'object' ? board.cards : {};
-
-  const columnIdToDb = new Map();
-  const desiredColumnClientIds = [];
+  const inputColumns = Array.isArray(board.columns) ? board.columns : [];
+  const inputCards = board.cards && typeof board.cards === 'object' ? board.cards : {};
 
   await sequelize.transaction(async (t) => {
-    for (let i = 0; i < columnOrder.length; i += 1) {
-      const col = columnOrder[i];
-      if (!col || typeof col !== 'object') continue;
-      const clientId = String(col.id ?? '').trim();
-      const title = String(col.title ?? '').trim();
-      if (!clientId || !title) continue;
-
-      desiredColumnClientIds.push(clientId);
-      let dbCol = await Column.findOne({
-        where: { client_id: clientId, project_id: normalizedProjectId },
+    const [existingColumns, existingTasks] = await Promise.all([
+      Column.findAll({
+        where: { project_id: normalizedProjectId },
+        order: [['position', 'ASC'], ['id', 'ASC']],
         transaction: t,
-      });
-      if (!dbCol) {
-        dbCol = await Column.create(
-          { client_id: clientId, name: title, position: i, project_id: normalizedProjectId },
-          { transaction: t },
-        );
+      }),
+      Task.findAll({
+        where: { project_id: normalizedProjectId },
+        order: [['position', 'ASC'], ['id', 'ASC']],
+        transaction: t,
+      }),
+    ]);
+
+    const columnsByDbId = new Map(existingColumns.map((column) => [String(column.id), column]));
+    const columnsByClientId = new Map(
+      existingColumns
+        .filter((column) => column.client_id)
+        .map((column) => [String(column.client_id), column]),
+    );
+    const tasksByDbId = new Map(existingTasks.map((task) => [String(task.id), task]));
+    const tasksByClientId = new Map(
+      existingTasks
+        .filter((task) => task.client_id)
+        .map((task) => [String(task.client_id), task]),
+    );
+
+    const boardColumnIdToDbColumn = new Map();
+    const desiredColumnDbIds = new Set();
+
+    for (let index = 0; index < inputColumns.length; index += 1) {
+      const column = inputColumns[index];
+      if (!column || typeof column !== 'object') continue;
+
+      const boardColumnId = String(column.id ?? '').trim();
+      const title = String(column.title ?? '').trim();
+      if (!boardColumnId || !title) continue;
+
+      let dbColumn = columnsByDbId.get(boardColumnId) || columnsByClientId.get(boardColumnId);
+      if (!dbColumn) {
+        dbColumn = await Column.create({
+          project_id: normalizedProjectId,
+          client_id: boardColumnId,
+          name: title,
+          position: index,
+        }, { transaction: t });
       } else {
-        await dbCol.update({ name: title, position: i }, { transaction: t });
+        const patch = { name: title, position: index };
+        if (!dbColumn.client_id && !isPositiveIntLike(boardColumnId)) {
+          patch.client_id = boardColumnId;
+        }
+        await dbColumn.update(patch, { transaction: t });
       }
-      columnIdToDb.set(clientId, dbCol);
+
+      boardColumnIdToDbColumn.set(boardColumnId, dbColumn);
+      desiredColumnDbIds.add(dbColumn.id);
+      columnsByDbId.set(String(dbColumn.id), dbColumn);
+      if (dbColumn.client_id) columnsByClientId.set(String(dbColumn.client_id), dbColumn);
     }
 
-    const cardIdToPlacement = new Map(); // client_id -> { columnClientId, position }
-    for (const col of columnOrder) {
-      if (!col || typeof col !== 'object') continue;
-      const colClientId = String(col.id ?? '').trim();
-      const cardIds = Array.isArray(col.cardIds) ? col.cardIds : [];
-      for (let pos = 0; pos < cardIds.length; pos += 1) {
-        const cardClientId = String(cardIds[pos] ?? '').trim();
-        if (!cardClientId) continue;
-        cardIdToPlacement.set(cardClientId, { columnClientId: colClientId, position: pos });
+    const cardPlacement = new Map();
+    for (const column of inputColumns) {
+      if (!column || typeof column !== 'object') continue;
+      const boardColumnId = String(column.id ?? '').trim();
+      const cardIds = Array.isArray(column.cardIds) ? column.cardIds : [];
+      for (let position = 0; position < cardIds.length; position += 1) {
+        const boardCardId = String(cardIds[position] ?? '').trim();
+        if (!boardCardId) continue;
+        cardPlacement.set(boardCardId, { boardColumnId, position });
       }
     }
 
-    const desiredTaskClientIds = Object.keys(cards).map((k) => String(k));
+    let nextTaskNumber = await getNextTaskNumber(Task, normalizedProjectId, t);
+    const desiredTaskDbIds = new Set();
+    const fallbackColumn = boardColumnIdToDbColumn.values().next().value || null;
 
-    for (const taskClientId of desiredTaskClientIds) {
-      const card = cards[taskClientId];
-      if (!card || typeof card !== 'object') continue;
+    for (const [boardCardIdRaw, rawCard] of Object.entries(inputCards)) {
+      const boardCardId = String(boardCardIdRaw);
+      if (!rawCard || typeof rawCard !== 'object') continue;
 
-      const placement = cardIdToPlacement.get(taskClientId);
-      const colClientId = placement?.columnClientId ?? null;
-      const dbCol = colClientId ? columnIdToDb.get(colClientId) : null;
+      const existingTask = tasksByDbId.get(boardCardId) || tasksByClientId.get(boardCardId);
+      const placement = cardPlacement.get(boardCardId);
+      const placedColumn = placement ? boardColumnIdToDbColumn.get(placement.boardColumnId) : null;
+      const resolvedColumn = placedColumn || fallbackColumn;
+      const normalizedTitle = String(rawCard.title ?? '').trim();
+      const planning = normalizePlanningValues(rawCard);
+      const taskNumberFromPayload = Number(rawCard.taskNumber);
 
-      const taskNumber = Number(card.taskNumber);
-      const title = String(card.title ?? '').trim();
-      const description = String(card.description ?? '');
-      const priority = String(card.priority ?? 'Medium');
-      const customerName = String(card.customer?.name ?? '').trim();
-      const assigneeName = String(card.assignee?.name ?? '').trim();
-      const assigneeInitials = String(card.assignee?.initials ?? '').trim();
-      const tags = Array.isArray(card.tags) ? card.tags : [];
-      const planning = normalizePlanningValues(card);
+      const taskNumber = (
+        Number.isFinite(taskNumberFromPayload) && taskNumberFromPayload > 0
+          ? Math.trunc(taskNumberFromPayload)
+          : (
+            existingTask && isPositiveIntLike(existingTask.task_number)
+              ? Number(existingTask.task_number)
+              : nextTaskNumber++
+          )
+      );
 
-      const update = {
-        user_id: userId,
-        client_id: taskClientId,
+      const patch = {
         project_id: normalizedProjectId,
-        task_number: Number.isFinite(taskNumber) ? taskNumber : null,
-        title: title || 'Untitled task',
-        text: description,
-        stat: dbCol ? dbCol.name : String(card.stat ?? 'To Do'),
-        priority,
-        column_id: dbCol ? dbCol.id : null,
+        title: normalizedTitle || 'Untitled task',
+        text: String(rawCard.description ?? ''),
+        stat: resolvedColumn ? resolvedColumn.name : 'To Do',
+        priority: normalizePriorityForStorage(rawCard.priority),
+        column_id: resolvedColumn ? resolvedColumn.id : null,
         position: placement?.position ?? 0,
-        customer_name: customerName || null,
-        assignee_name: assigneeName || null,
-        assignee_initials: assigneeInitials || null,
+        task_number: taskNumber,
+        customer_name: normalizeNullableText(rawCard.customer?.name),
+        assignee_name: normalizeNullableText(rawCard.assignee?.name),
+        assignee_initials: normalizeNullableText(rawCard.assignee?.initials),
         planned_date: planning.plannedDate,
         duration_weeks: planning.durationWeeks,
         duration_days: planning.durationDays,
-        tags,
+        tags: normalizeTags(rawCard.tags),
       };
 
-      const existing = await Task.findOne({
-        where: { user_id: userId, client_id: taskClientId, project_id: normalizedProjectId },
-        transaction: t,
-      });
-      if (!existing) {
-        await Task.create(update, { transaction: t });
-      } else {
-        await existing.update(update, { transaction: t });
+      if (!existingTask) {
+        const created = await Task.create({
+          ...patch,
+          user_id: normalizedUserId,
+          client_id: isPositiveIntLike(boardCardId) ? null : boardCardId,
+        }, { transaction: t });
+        desiredTaskDbIds.add(created.id);
+        continue;
       }
+
+      if (!existingTask.client_id && !isPositiveIntLike(boardCardId)) {
+        patch.client_id = boardCardId;
+      }
+      await existingTask.update(patch, { transaction: t });
+      desiredTaskDbIds.add(existingTask.id);
     }
 
-    await Task.destroy({
-      where: {
-        user_id: userId,
-        project_id: normalizedProjectId,
-        client_id: { [Op.ne]: null, [Op.notIn]: desiredTaskClientIds },
-      },
-      transaction: t,
-    });
+    const taskIdsToDelete = existingTasks
+      .map((task) => task.id)
+      .filter((id) => !desiredTaskDbIds.has(id));
+    if (taskIdsToDelete.length > 0) {
+      await Task.destroy({
+        where: {
+          id: { [Op.in]: taskIdsToDelete },
+          project_id: normalizedProjectId,
+        },
+        transaction: t,
+      });
+    }
 
-    await Column.destroy({
-      where: {
-        project_id: normalizedProjectId,
-        client_id: { [Op.ne]: null, [Op.notIn]: desiredColumnClientIds },
-      },
-      transaction: t,
-    });
+    const columnIdsToDelete = existingColumns
+      .map((column) => column.id)
+      .filter((id) => !desiredColumnDbIds.has(id));
+    if (columnIdsToDelete.length > 0) {
+      await Column.destroy({
+        where: {
+          id: { [Op.in]: columnIdsToDelete },
+          project_id: normalizedProjectId,
+        },
+        transaction: t,
+      });
+    }
   });
 }
 
@@ -525,89 +650,79 @@ async function buildBoardFromTables(sequelize, projectId) {
   if (!Number.isFinite(normalizedProjectId)) {
     throw new Error('Invalid projectId for board build');
   }
-  const userId = await getOrCreateApiUserId(sequelize);
 
   const columns = await Column.findAll({
-    where: { project_id: normalizedProjectId, client_id: { [Op.ne]: null } },
+    where: { project_id: normalizedProjectId },
     order: [['position', 'ASC'], ['id', 'ASC']],
   });
 
   const tasks = await Task.findAll({
-    where: { user_id: userId, project_id: normalizedProjectId, client_id: { [Op.ne]: null } },
+    where: { project_id: normalizedProjectId },
     order: [['position', 'ASC'], ['id', 'ASC']],
   });
 
   const tasksByColumnId = new Map();
-  for (const t of tasks) {
-    const colId = t.column_id ?? null;
-    const list = tasksByColumnId.get(colId) ?? [];
-    list.push(t);
-    tasksByColumnId.set(colId, list);
+  for (const task of tasks) {
+    const columnId = task.column_id ?? null;
+    const list = tasksByColumnId.get(columnId) ?? [];
+    list.push(task);
+    tasksByColumnId.set(columnId, list);
+  }
+
+  const boardColumns = columns.map((column) => {
+    const columnTasks = tasksByColumnId.get(column.id) ?? [];
+    return {
+      id: column.client_id || String(column.id),
+      title: column.name,
+      cardIds: columnTasks.map((task) => cardIdFromTask(task)),
+    };
+  });
+
+  if (boardColumns.length === 0) {
+    boardColumns.push(...DEFAULT_BOARD_COLUMNS.map((entry) => ({
+      ...entry,
+      cardIds: [],
+    })));
+  }
+
+  const knownColumnIds = new Set(columns.map((column) => column.id));
+  const unassignedTasks = tasks.filter((task) => !task.column_id || !knownColumnIds.has(task.column_id));
+  if (unassignedTasks.length > 0) {
+    boardColumns.push({
+      id: 'unassigned',
+      title: 'Unassigned',
+      cardIds: unassignedTasks.map((task) => cardIdFromTask(task)),
+    });
   }
 
   const board = {
-    columns: columns.map((c) => {
-      const colTasks = tasksByColumnId.get(c.id) ?? [];
-      return {
-        id: c.client_id ?? String(c.id),
-        title: c.name,
-        cardIds: colTasks.map((t) => t.client_id ?? String(t.id)),
-      };
-    }),
+    columns: boardColumns,
     cards: {},
   };
 
-  for (const t of tasks) {
-    const clientId = t.client_id ?? String(t.id);
-    board.cards[clientId] = {
-      id: clientId,
-      taskNumber: t.task_number ?? t.id,
-      title: t.title,
-      customer: t.customer_name ? { name: t.customer_name } : undefined,
-      description: t.text ?? '',
-      tags: Array.isArray(t.tags) ? t.tags : [],
-      priority: t.priority || 'Medium',
-      plannedDate: t.planned_date ?? undefined,
-      durationWeeks: Number.isFinite(Number(t.duration_weeks)) ? Number(t.duration_weeks) : 0,
-      durationDays: Number.isFinite(Number(t.duration_days)) ? Number(t.duration_days) : 0,
-      assignee: t.assignee_name
-        ? { name: t.assignee_name, initials: t.assignee_initials || t.assignee_name.slice(0, 2).toUpperCase() }
-        : undefined,
-    };
+  for (const task of tasks) {
+    board.cards[cardIdFromTask(task)] = mapTaskToBoardCard(task);
   }
 
-  return { board, userId };
+  const nextTaskNumber = await getNextTaskNumber(Task, normalizedProjectId);
+  return { board, nextTaskNumber };
 }
 
-function defaultBoardState() {
-  return {
-    columns: [
-      { id: 'todo', title: 'To Do', cardIds: [] },
-      { id: 'inprogress', title: 'In Progress', cardIds: [] },
-      { id: 'review', title: 'Review', cardIds: [] },
-      { id: 'done', title: 'Done', cardIds: [] },
-    ],
-    cards: {},
-  };
+function parseProjectIdInput(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-async function ensureBoardStateForProject(sequelize, projectId) {
-  const { BoardState } = sequelize.models;
-  let state = await BoardState.findOne({ where: { project_id: projectId } });
-  if (state) return state;
+function parseProjectIdFromRequest(req) {
+  return parseProjectIdInput(req.query.projectId ?? req.query.project_id);
+}
 
-  const byId = await BoardState.findByPk(projectId);
-  if (byId && (byId.project_id === null || byId.project_id === undefined)) {
-    await byId.update({ project_id: projectId });
-    return byId;
-  }
-
-  return BoardState.create({
-    id: projectId,
-    project_id: projectId,
-    board: defaultBoardState(),
-    next_task_number: 1,
-  });
+async function getBoardPayload(sequelize, projectId) {
+  const { Project, Column } = sequelize.models;
+  await ensureProjectExists(Project, projectId);
+  await ensureDefaultColumnsForProject(Column, projectId);
+  return buildBoardFromTables(sequelize, projectId);
 }
 
 app.get('/api/health', (req, res) => {
@@ -633,57 +748,61 @@ app.post('/api/projects', requireAuth, async (req, res) => {
   }
   try {
     const sequelize = getBaseSequelize();
-    const { Project } = sequelize.models;
-    const project = await Project.create({ name, theme });
-
-    const state = await ensureBoardStateForProject(sequelize, project.id);
-    await syncBoardToTables(sequelize, state.board, project.id);
-
-    res.status(201).json(project);
+    const { Project, Column } = sequelize.models;
+    const createdProject = await sequelize.transaction(async (transaction) => {
+      const project = await Project.create({ name, theme }, { transaction });
+      await ensureDefaultColumnsForProject(Column, project.id, transaction);
+      return project;
+    });
+    res.status(201).json(createdProject);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get('/api/projects/:projectId/board', requireAuth, async (req, res) => {
-  const projectId = Number(req.params.projectId);
+  const projectId = parseProjectIdInput(req.params.projectId);
   if (!Number.isFinite(projectId)) {
     return res.status(400).json({ error: 'Некорректный projectId' });
   }
+
   try {
     const sequelize = getBaseSequelize();
-    const { Project } = sequelize.models;
-    const project = await Project.findByPk(projectId);
-    if (!project) {
-      return res.status(404).json({ error: 'Проект не найден' });
-    }
-
-    const state = await ensureBoardStateForProject(sequelize, projectId);
-    await syncBoardToTables(sequelize, state.board, projectId);
-
-    let built = await buildBoardFromTables(sequelize, projectId);
-    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && state.board) {
-      await syncBoardToTables(sequelize, state.board, projectId);
-      built = await buildBoardFromTables(sequelize, projectId);
-    }
-
-    res.json({ board: built.board, nextTaskNumber: state.next_task_number });
+    const payload = await getBoardPayload(sequelize, projectId);
+    res.json(payload);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/projects/:projectId/tasks', requireAuth, async (req, res) => {
+  const projectId = parseProjectIdInput(req.params.projectId);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Некорректный projectId' });
+  }
+
+  try {
+    const { Project, Task } = await getModelsForReq(req);
+    await ensureProjectExists(Project, projectId);
+    const tasks = await Task.findAll({
+      where: { project_id: projectId },
+      order: [['position', 'ASC'], ['id', 'ASC']],
+    });
+    res.json(tasks);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 app.put('/api/projects/:projectId/board', requireAuth, async (req, res) => {
-  const projectId = Number(req.params.projectId);
+  const projectId = parseProjectIdInput(req.params.projectId);
   if (!Number.isFinite(projectId)) {
     return res.status(400).json({ error: 'Некорректный projectId' });
   }
-  const { board, nextTaskNumber } = req.body || {};
+
+  const { board } = req.body || {};
   if (!board || typeof board !== 'object') {
     return res.status(400).json({ error: 'Missing board' });
-  }
-  if (!Number.isFinite(Number(nextTaskNumber)) || Number(nextTaskNumber) < 1) {
-    return res.status(400).json({ error: 'Invalid nextTaskNumber' });
   }
   if (!Array.isArray(board.columns) || typeof board.cards !== 'object' || board.cards === null) {
     return res.status(400).json({ error: 'Invalid board shape' });
@@ -691,54 +810,41 @@ app.put('/api/projects/:projectId/board', requireAuth, async (req, res) => {
 
   try {
     const sequelize = getBaseSequelize();
-    const { Project, BoardState } = sequelize.models;
-    const project = await Project.findByPk(projectId);
-    if (!project) {
-      return res.status(404).json({ error: 'Проект не найден' });
-    }
-
-    const existing = await ensureBoardStateForProject(sequelize, projectId);
-    await existing.update({
-      board,
-      next_task_number: Number(nextTaskNumber),
-      updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
-    });
-
-    await syncBoardToTables(sequelize, board, projectId);
+    const { Project, Column } = sequelize.models;
+    await ensureProjectExists(Project, projectId);
+    await ensureDefaultColumnsForProject(Column, projectId);
+    await syncBoardToTables(sequelize, board, projectId, req.auth.userId);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
-// API для получения доски
-app.get('/api/board', async (req, res) => {
+// Backward compatibility: explicit projectId query is required.
+app.get('/api/board', requireAuth, async (req, res) => {
+  const projectId = parseProjectIdFromRequest(req);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Укажите projectId в query' });
+  }
+
   try {
     const sequelize = getBaseSequelize();
-    const defaultProjectId = await getOrCreateDefaultProjectId(sequelize);
-
-    const state = await ensureBoardStateForProject(sequelize, defaultProjectId);
-    await syncBoardToTables(sequelize, state.board, defaultProjectId);
-
-    let built = await buildBoardFromTables(sequelize, defaultProjectId);
-    if (built.board.columns.length === 0 && Object.keys(built.board.cards).length === 0 && state.board) {
-      await syncBoardToTables(sequelize, state.board, defaultProjectId);
-      built = await buildBoardFromTables(sequelize, defaultProjectId);
-    }
-
-    res.json({ board: built.board, nextTaskNumber: state?.next_task_number ?? 1 });
+    const payload = await getBoardPayload(sequelize, projectId);
+    res.json(payload);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
-// API для обновления доски
-app.put('/api/board', async (req, res) => {
-  const { board, nextTaskNumber } = req.body || {};
+
+app.put('/api/board', requireAuth, async (req, res) => {
+  const projectId = parseProjectIdFromRequest(req);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Укажите projectId в query' });
+  }
+
+  const { board } = req.body || {};
   if (!board || typeof board !== 'object') {
     return res.status(400).json({ error: 'Missing board' });
-  }
-  if (!Number.isFinite(Number(nextTaskNumber)) || Number(nextTaskNumber) < 1) {
-    return res.status(400).json({ error: 'Invalid nextTaskNumber' });
   }
   if (!Array.isArray(board.columns) || typeof board.cards !== 'object' || board.cards === null) {
     return res.status(400).json({ error: 'Invalid board shape' });
@@ -746,21 +852,15 @@ app.put('/api/board', async (req, res) => {
 
   try {
     const sequelize = getBaseSequelize();
-    const defaultProjectId = await getOrCreateDefaultProjectId(sequelize);
-
-    const existing = await ensureBoardStateForProject(sequelize, defaultProjectId);
-    await existing.update({
-      board,
-      next_task_number: Number(nextTaskNumber),
-      updated_at: Sequelize.literal('CURRENT_TIMESTAMP'),
-    });
-    await syncBoardToTables(sequelize, board, defaultProjectId);
+    const { Project, Column } = sequelize.models;
+    await ensureProjectExists(Project, projectId);
+    await ensureDefaultColumnsForProject(Column, projectId);
+    await syncBoardToTables(sequelize, board, projectId, req.auth.userId);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
-
 function getBaseSequelize() {
   if (!sequelizeCache.has('_app')) {
     const sequelize = new Sequelize(databaseUrlApp, {
@@ -779,34 +879,171 @@ async function getModelsForReq(req) {
   return { ...sequelize.models, sequelize };
 }
 
-async function ensureColumnByName(Column, name, projectId) {
-  const trimmed = (name || '').trim();
-  if (!trimmed) return null;
-  const where = { name: trimmed };
-  if (projectId !== undefined) where.project_id = projectId;
-  const existing = await Column.findOne({ where });
-  if (existing) return existing;
-  return Column.create({ name: trimmed, project_id: projectId ?? null });
+function parseEntityId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
 }
 
-async function validateColumnById(Column, columnId, projectId) {
-  if (columnId === undefined || columnId === null) return null;
+function readProjectIdFromBody(body) {
+  return parseEntityId(body?.projectId ?? body?.project_id);
+}
+
+function readColumnIdFromBody(body) {
+  return parseEntityId(body?.columnId ?? body?.column_id);
+}
+
+function readColumnClientIdFromBody(body) {
+  const raw = body?.columnClientId ?? body?.column_client_id;
+  const normalized = normalizeNullableText(raw);
+  return normalized ? String(normalized) : null;
+}
+
+async function findColumnByName(Column, name, projectId, transaction) {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) return null;
+  return Column.findOne({
+    where: { name: trimmed, project_id: projectId },
+    transaction,
+  });
+}
+
+async function validateColumnById(Column, columnId, projectId, transaction) {
+  if (!Number.isInteger(columnId) || columnId < 1) {
+    const err = new Error('Некорректный columnId');
+    err.status = 400;
+    throw err;
+  }
+
   const where = { id: columnId };
-  if (projectId !== undefined) where.project_id = projectId;
-  const col = await Column.findOne({ where });
+  if (projectId !== undefined && projectId !== null) where.project_id = projectId;
+  const col = await Column.findOne({ where, transaction });
   if (!col) {
-    const err = new Error('Колонка не найдена');
-    err.status = 404;
+    const err = new Error(
+      projectId !== undefined && projectId !== null
+        ? 'Колонка не найдена в указанном проекте'
+        : 'Колонка не найдена',
+    );
+    err.status = 400;
     throw err;
   }
   return col;
+}
+
+async function resolveColumnForTask(Column, projectId, body, transaction, { requireExplicitColumn = true } = {}) {
+  await ensureDefaultColumnsForProject(Column, projectId, transaction);
+
+  const columnId = readColumnIdFromBody(body);
+  if (Number.isFinite(columnId)) {
+    const directMatch = await Column.findOne({
+      where: { id: columnId, project_id: projectId },
+      transaction,
+    });
+    if (directMatch) return directMatch;
+
+    // Compatibility mode: interpret 1..N as column ordinal inside the project.
+    const orderedColumns = await Column.findAll({
+      where: { project_id: projectId },
+      order: [['position', 'ASC'], ['id', 'ASC']],
+      transaction,
+    });
+    if (columnId >= 1 && columnId <= orderedColumns.length) {
+      return orderedColumns[columnId - 1];
+    }
+
+    const err = new Error('Колонка не найдена в указанном проекте');
+    err.status = 400;
+    err.details = {
+      projectId,
+      requestedColumnId: columnId,
+      availableColumns: orderedColumns.map((column) => ({
+        id: column.id,
+        name: column.name,
+        client_id: column.client_id,
+        position: column.position,
+      })),
+    };
+    throw err;
+  }
+
+  const columnClientId = readColumnClientIdFromBody(body);
+  if (columnClientId) {
+    const byClientId = await Column.findOne({
+      where: { project_id: projectId, client_id: columnClientId },
+      transaction,
+    });
+    if (!byClientId) {
+      const err = new Error('Колонка с таким columnClientId не найдена в проекте');
+      err.status = 400;
+      throw err;
+    }
+    return byClientId;
+  }
+
+  const stat = normalizeNullableText(body?.stat);
+  if (stat) {
+    const byName = await findColumnByName(Column, stat, projectId, transaction);
+    if (!byName) {
+      const err = new Error('Колонка с таким stat не найдена в проекте');
+      err.status = 400;
+      throw err;
+    }
+    return byName;
+  }
+
+  if (requireExplicitColumn) {
+    const err = new Error('Укажите columnId/columnClientId/stat');
+    err.status = 400;
+    throw err;
+  }
+
+  const firstColumn = await Column.findOne({
+    where: { project_id: projectId },
+    order: [['position', 'ASC'], ['id', 'ASC']],
+    transaction,
+  });
+  if (!firstColumn) {
+    const err = new Error('В проекте нет колонок');
+    err.status = 400;
+    throw err;
+  }
+  return firstColumn;
 }
 
 // получить все таски
 app.get('/tasks', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
-    const tasks = await Task.findAll({ where: { user_id: req.auth.userId } });
+    const where = {};
+
+    if (req.query.projectId !== undefined || req.query.project_id !== undefined) {
+      const projectId = parseEntityId(req.query.projectId ?? req.query.project_id);
+      if (!Number.isFinite(projectId)) {
+        return res.status(400).json({ error: 'Некорректный projectId' });
+      }
+      where.project_id = projectId;
+    }
+
+    if (req.query.columnId !== undefined || req.query.column_id !== undefined) {
+      const columnId = parseEntityId(req.query.columnId ?? req.query.column_id);
+      if (!Number.isFinite(columnId)) {
+        return res.status(400).json({ error: 'Некорректный columnId' });
+      }
+      where.column_id = columnId;
+    }
+
+    if (req.query.userId !== undefined || req.query.user_id !== undefined) {
+      const userId = parseEntityId(req.query.userId ?? req.query.user_id);
+      if (!Number.isFinite(userId)) {
+        return res.status(400).json({ error: 'Некорректный userId' });
+      }
+      where.user_id = userId;
+    }
+
+    const tasks = await Task.findAll({
+      where,
+      order: [['project_id', 'ASC'], ['position', 'ASC'], ['id', 'ASC']],
+    });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -823,7 +1060,6 @@ app.get('/tasks/search', requireAuth, async (req, res) => {
     const { Task } = await getModelsForReq(req);
     const tasks = await Task.findAll({
       where: {
-        user_id: req.auth.userId,
         title: { [Op.iLike]: `${q}%` },
       },
     });
@@ -838,7 +1074,7 @@ app.get('/tasks/:id', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
     const task = await Task.findOne({
-      where: { id: req.params.id, user_id: req.auth.userId },
+      where: { id: req.params.id },
     });
     if (!task) {
       return res.status(404).json({ error: 'Не нашлась задача' });
@@ -851,65 +1087,97 @@ app.get('/tasks/:id', requireAuth, async (req, res) => {
 
 // создать таску
 app.post('/tasks', requireAuth, async (req, res) => {
-  const {
-    title,
-    text = '',
-    stat = 'Создана',
-    priority = 'normal',
-    columnId,
-    projectId,
-  } = req.body;
+  const title = String(req.body?.title ?? '').trim();
   if (!title) {
     return res.status(400).json({ error: 'Необходимо указать title' });
   }
 
+  const projectId = readProjectIdFromBody(req.body);
+  if (!Number.isFinite(projectId)) {
+    return res.status(400).json({ error: 'Необходимо указать корректный projectId/project_id' });
+  }
+
+  const planning = parsePlanningPayload(req.body);
+  if (planning.error) {
+    return res.status(400).json({ error: planning.error });
+  }
+
   try {
-    const { Task, Column } = await getModelsForReq(req);
-    const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
-    if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
-      return res.status(400).json({ error: 'Некорректный projectId' });
-    }
+    const { Task, Column, Project, sequelize } = await getModelsForReq(req);
+    const task = await sequelize.transaction(async (transaction) => {
+      await ensureProjectExists(Project, projectId, transaction);
+      const resolvedColumn = await resolveColumnForTask(Column, projectId, req.body, transaction, {
+        requireExplicitColumn: false,
+      });
 
-    const planning = parsePlanningPayload(req.body);
-    if (planning.error) {
-      return res.status(400).json({ error: planning.error });
-    }
+      const nextTaskNumber = await getNextTaskNumber(Task, projectId, transaction);
+      const nextPosition = await getNextTaskPosition(
+        Task,
+        projectId,
+        resolvedColumn.id,
+        transaction,
+      );
 
-    let resolvedColumn = null;
-    if (columnId !== undefined) {
-      resolvedColumn = await validateColumnById(Column, Number(columnId), resolvedProjectId);
-    } else if (stat) {
-      resolvedColumn = await ensureColumnByName(Column, stat, resolvedProjectId);
-    }
+      const assigneeName = normalizeNullableText(req.body?.assigneeName ?? req.body?.assignee_name);
+      const assigneeInitials = normalizeNullableText(
+        req.body?.assigneeInitials ??
+        req.body?.assignee_initials ??
+        (assigneeName ? assigneeName.slice(0, 2).toUpperCase() : null),
+      );
 
-    const task = await Task.create({
-      user_id: req.auth.userId,
-      title,
-      text,
-      stat: resolvedColumn ? resolvedColumn.name : stat,
-      priority,
-      column_id: resolvedColumn ? resolvedColumn.id : null,
-      project_id: resolvedProjectId ?? null,
-      planned_date: planning.provided ? planning.plannedDate : null,
-      duration_weeks: planning.provided ? planning.durationWeeks : 0,
-      duration_days: planning.provided ? planning.durationDays : 0,
+      return Task.create({
+        user_id: req.auth.userId,
+        title,
+        text: String(req.body?.text ?? req.body?.description ?? ''),
+        stat: resolvedColumn.name,
+        priority: normalizePriorityForStorage(req.body?.priority),
+        column_id: resolvedColumn.id,
+        project_id: projectId,
+        task_number: nextTaskNumber,
+        position: nextPosition,
+        customer_name: normalizeNullableText(req.body?.customerName ?? req.body?.customer_name),
+        assignee_name: assigneeName,
+        assignee_initials: assigneeInitials,
+        tags: normalizeTags(req.body?.tags),
+        planned_date: planning.provided ? planning.plannedDate : null,
+        duration_weeks: planning.provided ? planning.durationWeeks : 0,
+        duration_days: planning.provided ? planning.durationDays : 0,
+      }, { transaction });
     });
+
     res.status(201).json(task);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    res.status(err.status || 500).json({
+      error: err.message,
+      ...(err.details ? { details: err.details } : {}),
+    });
   }
 });
 
 // Редактировать таску по id
 app.put('/tasks/:id', requireAuth, async (req, res) => {
-  const { title, text, stat, priority, columnId, projectId } = req.body;
+  const { title, text, stat, priority } = req.body;
+  const projectIdInput = readProjectIdFromBody(req.body);
+  const columnIdInput = readColumnIdFromBody(req.body);
+  const hasProjectUpdate = req.body?.projectId !== undefined || req.body?.project_id !== undefined;
+  const hasColumnUpdate = req.body?.columnId !== undefined || req.body?.column_id !== undefined;
+  const hasTextMetaUpdate =
+    req.body?.customerName !== undefined ||
+    req.body?.customer_name !== undefined ||
+    req.body?.assigneeName !== undefined ||
+    req.body?.assignee_name !== undefined ||
+    req.body?.assigneeInitials !== undefined ||
+    req.body?.assignee_initials !== undefined ||
+    req.body?.tags !== undefined;
+
   if (
     title === undefined &&
     text === undefined &&
     stat === undefined &&
     priority === undefined &&
-    columnId === undefined &&
-    projectId === undefined &&
+    !hasColumnUpdate &&
+    !hasProjectUpdate &&
+    !hasTextMetaUpdate &&
     req.body.plannedDate === undefined &&
     req.body.durationWeeks === undefined &&
     req.body.durationDays === undefined &&
@@ -920,65 +1188,108 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Нечего обновлять' });
   }
 
+  if (hasProjectUpdate && !Number.isFinite(projectIdInput)) {
+    return res.status(400).json({ error: 'Некорректный projectId/project_id' });
+  }
+  if (hasColumnUpdate && !Number.isFinite(columnIdInput)) {
+    return res.status(400).json({ error: 'Некорректный columnId/column_id' });
+  }
+
+  const planning = parsePlanningPayload(req.body);
+  if (planning.error) {
+    return res.status(400).json({ error: planning.error });
+  }
+
   try {
-    const { Task, Column } = await getModelsForReq(req);
-    const task = await Task.findOne({
-      where: { id: req.params.id, user_id: req.auth.userId },
-    });
-    if (!task) {
-      return res.status(404).json({ error: 'Не найдена задача' });
-    }
-
-    const resolvedProjectId = projectId !== undefined ? Number(projectId) : undefined;
-    if (resolvedProjectId !== undefined && Number.isNaN(resolvedProjectId)) {
-      return res.status(400).json({ error: 'Некорректный projectId' });
-    }
-
-    const planning = parsePlanningPayload(req.body, {
-      plannedDate: task.planned_date,
-      durationWeeks: task.duration_weeks,
-      durationDays: task.duration_days,
-    });
-    if (planning.error) {
-      return res.status(400).json({ error: planning.error });
-    }
-
-    let resolvedColumn = null;
-    if (columnId !== undefined) {
-      if (columnId === null) {
-        return res.status(400).json({ error: 'columnId не может быть null' });
+    const { Task, Column, Project, sequelize } = await getModelsForReq(req);
+    const updatedTask = await sequelize.transaction(async (transaction) => {
+      const task = await Task.findOne({
+        where: { id: req.params.id },
+        transaction,
+      });
+      if (!task) {
+        const err = new Error('Не найдена задача');
+        err.status = 404;
+        throw err;
       }
-      resolvedColumn = await validateColumnById(Column, Number(columnId), resolvedProjectId);
-    } else if (stat !== undefined) {
-      resolvedColumn = await ensureColumnByName(Column, stat, resolvedProjectId);
-    }
 
-    if (title !== undefined) task.title = title;
-    if (text !== undefined) task.text = text;
-    if (priority !== undefined) task.priority = priority;
+      const nextProjectId = hasProjectUpdate ? projectIdInput : task.project_id;
+      if (!Number.isInteger(nextProjectId) || nextProjectId < 1) {
+        const err = new Error('Для задачи должен быть указан project_id');
+        err.status = 400;
+        throw err;
+      }
 
-    if (columnId !== undefined || stat !== undefined) {
+      await ensureProjectExists(Project, nextProjectId, transaction);
+
+      let resolvedColumn = null;
+      if (hasColumnUpdate) {
+        resolvedColumn = await validateColumnById(Column, columnIdInput, nextProjectId, transaction);
+      } else if (stat !== undefined) {
+        resolvedColumn = await findColumnByName(Column, stat, nextProjectId, transaction);
+        if (!resolvedColumn) {
+          const err = new Error('Колонка с таким статусом не найдена в проекте');
+          err.status = 400;
+          throw err;
+        }
+      } else if (task.column_id) {
+        const keepColumn = await Column.findOne({
+          where: { id: task.column_id, project_id: nextProjectId },
+          transaction,
+        });
+        if (!keepColumn) {
+          const err = new Error('Нельзя сохранить задачу с колонкой другого проекта');
+          err.status = 400;
+          throw err;
+        }
+      }
+
+      if (title !== undefined) task.title = String(title).trim() || task.title;
+      if (text !== undefined) task.text = String(text);
+      if (priority !== undefined) task.priority = normalizePriorityForStorage(priority);
+
       if (resolvedColumn) {
+        const movedAcrossColumns = task.column_id !== resolvedColumn.id;
         task.stat = resolvedColumn.name;
         task.column_id = resolvedColumn.id;
-      } else if (stat !== undefined) {
-        task.stat = stat;
-        task.column_id = null;
+        if (movedAcrossColumns) {
+          task.position = await getNextTaskPosition(
+            Task,
+            nextProjectId,
+            resolvedColumn.id,
+            transaction,
+          );
+        }
       }
-    }
 
-    if (resolvedProjectId !== undefined) {
-      task.project_id = resolvedProjectId;
-    }
+      task.project_id = nextProjectId;
 
-    if (planning.provided) {
-      task.planned_date = planning.plannedDate;
-      task.duration_weeks = planning.durationWeeks;
-      task.duration_days = planning.durationDays;
-    }
+      if (planning.provided) {
+        task.planned_date = planning.plannedDate;
+        task.duration_weeks = planning.durationWeeks;
+        task.duration_days = planning.durationDays;
+      }
 
-    await task.save();
-    res.json(task);
+      if (req.body?.customerName !== undefined || req.body?.customer_name !== undefined) {
+        task.customer_name = normalizeNullableText(req.body?.customerName ?? req.body?.customer_name);
+      }
+      if (req.body?.assigneeName !== undefined || req.body?.assignee_name !== undefined) {
+        task.assignee_name = normalizeNullableText(req.body?.assigneeName ?? req.body?.assignee_name);
+      }
+      if (req.body?.assigneeInitials !== undefined || req.body?.assignee_initials !== undefined) {
+        task.assignee_initials = normalizeNullableText(req.body?.assigneeInitials ?? req.body?.assignee_initials);
+      } else if (task.assignee_name && !task.assignee_initials) {
+        task.assignee_initials = task.assignee_name.slice(0, 2).toUpperCase();
+      }
+      if (req.body?.tags !== undefined) {
+        task.tags = normalizeTags(req.body.tags);
+      }
+
+      await task.save({ transaction });
+      return task;
+    });
+
+    res.json(updatedTask);
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -988,7 +1299,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
 app.get('/', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
-    const tasks = await Task.findAll({ where: { user_id: req.auth.userId } });
+    const tasks = await Task.findAll();
     res.json(tasks);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -997,25 +1308,29 @@ app.get('/', requireAuth, async (req, res) => {
 
 // Фильтрация задач по приоритету/статусу/пользователю
 app.get('/tasks/filter', requireAuth, async (req, res) => {
-  const { priority, stat, userId, columnId, projectId } = req.query;
-  const targetUserId = userId ? Number(userId) : req.auth.userId;
-  if (Number.isNaN(targetUserId)) {
-    return res.status(400).json({ error: 'Некорректный userId' });
+  const { priority, stat, userId } = req.query;
+  const projectId = req.query.projectId ?? req.query.project_id;
+  const columnId = req.query.columnId ?? req.query.column_id;
+  const where = {};
+  if (userId !== undefined) {
+    const parsedUserId = parseEntityId(userId);
+    if (!Number.isFinite(parsedUserId)) {
+      return res.status(400).json({ error: 'Некорректный userId' });
+    }
+    where.user_id = parsedUserId;
   }
-
-  const where = { user_id: targetUserId };
   if (priority) where.priority = priority;
   if (stat) where.stat = stat;
   if (projectId !== undefined) {
-    const parsedProjectId = Number(projectId);
-    if (Number.isNaN(parsedProjectId)) {
+    const parsedProjectId = parseEntityId(projectId);
+    if (!Number.isFinite(parsedProjectId)) {
       return res.status(400).json({ error: 'Некорректный projectId' });
     }
     where.project_id = parsedProjectId;
   }
   if (columnId !== undefined) {
-    const parsedColumnId = Number(columnId);
-    if (Number.isNaN(parsedColumnId)) {
+    const parsedColumnId = parseEntityId(columnId);
+    if (!Number.isFinite(parsedColumnId)) {
       return res.status(400).json({ error: 'Некорректный columnId' });
     }
     where.column_id = parsedColumnId;
@@ -1069,18 +1384,19 @@ app.get('/users/search', requireAuth, async (req, res) => {
 app.get('/columns', requireAuth, async (req, res) => {
   try {
     const { Column, Task } = await getModelsForReq(req);
-    const projectId = req.query.projectId !== undefined ? Number(req.query.projectId) : undefined;
-    if (projectId !== undefined && Number.isNaN(projectId)) {
+    const hasProjectFilter = req.query.projectId !== undefined || req.query.project_id !== undefined;
+    const projectId = parseEntityId(req.query.projectId ?? req.query.project_id);
+    if (hasProjectFilter && !Number.isFinite(projectId)) {
       return res.status(400).json({ error: 'Некорректный projectId' });
     }
     const where = {};
-    if (projectId !== undefined) where.project_id = projectId;
+    if (projectId !== null) where.project_id = projectId;
     const columns = await Column.findAll({
       where,
       include: [{
         model: Task,
         required: false,
-        where: { user_id: req.auth.userId, ...(projectId !== undefined ? { project_id: projectId } : {}) },
+        where: { ...(projectId !== null ? { project_id: projectId } : {}) },
       }],
       order: [['id', 'ASC']],
     });
@@ -1097,13 +1413,17 @@ app.post('/columns', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Укажите name' });
   }
   try {
-    const { Column } = await getModelsForReq(req);
-    const projectId = req.body.projectId !== undefined ? Number(req.body.projectId) : undefined;
-    if (projectId !== undefined && Number.isNaN(projectId)) {
-      return res.status(400).json({ error: 'Некорректный projectId' });
+    const { Column, Project } = await getModelsForReq(req);
+    const hasProjectInBody = req.body?.projectId !== undefined || req.body?.project_id !== undefined;
+    const projectId = readProjectIdFromBody(req.body);
+    if (hasProjectInBody && !Number.isFinite(projectId)) {
+      return res.status(400).json({ error: 'Некорректный projectId/project_id' });
+    }
+    if (projectId !== null) {
+      await ensureProjectExists(Project, projectId);
     }
     const where = { name };
-    if (projectId !== undefined) where.project_id = projectId;
+    if (projectId !== null) where.project_id = projectId;
     const existing = await Column.findOne({ where });
     if (existing) {
       return res.status(409).json({ error: 'Колонка с таким названием уже существует' });
@@ -1111,7 +1431,7 @@ app.post('/columns', requireAuth, async (req, res) => {
     const column = await Column.create({ name, project_id: projectId ?? null });
     res.status(201).json(column);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -1120,7 +1440,7 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
   try {
     const { Task } = await getModelsForReq(req);
     const deleted = await Task.destroy({
-      where: { id: req.params.id, user_id: req.auth.userId },
+      where: { id: req.params.id },
     });
     if (!deleted) {
       return res.status(404).json({ error: 'Не найдена задача' });

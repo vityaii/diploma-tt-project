@@ -69,6 +69,7 @@ const ALTER_TABLE_STATEMENTS = [
   `ALTER TABLE columns ADD COLUMN IF NOT EXISTS client_id TEXT;`,
   `ALTER TABLE columns ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;`,
   `ALTER TABLE columns ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS columns_project_id_id_idx ON columns(project_id, id);`,
   `ALTER TABLE tasks ALTER COLUMN text TYPE TEXT;`,
   `ALTER TABLE tasks ALTER COLUMN text SET DEFAULT '';`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS client_id TEXT;`,
@@ -83,6 +84,38 @@ const ALTER_TABLE_STATEMENTS = [
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;`,
   `ALTER TABLE board_state ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE;`,
+  `UPDATE tasks t SET project_id = c.project_id FROM columns c WHERE t.column_id = c.id AND t.project_id IS NULL;`,
+  `
+    UPDATE tasks t
+    SET column_id = NULL
+    WHERE t.column_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM columns c
+        WHERE c.id = t.column_id
+          AND c.project_id IS NOT DISTINCT FROM t.project_id
+      );
+  `,
+  `UPDATE tasks SET priority = 'medium' WHERE lower(priority) = 'normal';`,
+  `
+    UPDATE tasks
+    SET priority = 'medium'
+    WHERE priority IS NULL
+      OR lower(priority) NOT IN ('low', 'medium', 'high');
+  `,
+  `ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_column_requires_project_chk;`,
+  `ALTER TABLE tasks ADD CONSTRAINT tasks_column_requires_project_chk CHECK (column_id IS NULL OR project_id IS NOT NULL) NOT VALID;`,
+  `ALTER TABLE tasks VALIDATE CONSTRAINT tasks_column_requires_project_chk;`,
+  `ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_project_column_fk;`,
+  `
+    ALTER TABLE tasks
+    ADD CONSTRAINT tasks_project_column_fk
+    FOREIGN KEY (project_id, column_id)
+    REFERENCES columns(project_id, id)
+    ON DELETE SET NULL
+    NOT VALID;
+  `,
+  `ALTER TABLE tasks VALIDATE CONSTRAINT tasks_project_column_fk;`,
 ];
 
 const DROP_INDEX_STATEMENTS = [
