@@ -71,6 +71,9 @@ components:
         column_id:
           type: integer
           nullable: true
+        project_id:
+          type: integer
+          nullable: true
         client_id:
           type: string
           nullable: true
@@ -86,6 +89,14 @@ components:
         assignee_initials:
           type: string
           nullable: true
+        planned_date:
+          type: string
+          format: date
+          nullable: true
+        duration_weeks:
+          type: integer
+        duration_days:
+          type: integer
         tags:
           type: array
           items:
@@ -167,9 +178,17 @@ paths:
                 properties:
                   ok:
                     type: boolean
-  /api/board:
+  /api/projects/{projectId}/board:
     get:
-      summary: Получить доску
+      summary: Получить доску проекта
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: OK
@@ -177,14 +196,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BoardResponse'
-        '500':
-          description: Ошибка сервера
+        '400':
+          description: Некорректный projectId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Проект не найден
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
     put:
-      summary: Обновить доску
+      summary: Обновить доску проекта
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
       requestBody:
         required: true
         content:
@@ -194,11 +233,8 @@ paths:
               properties:
                 board:
                   $ref: '#/components/schemas/Board'
-                nextTaskNumber:
-                  type: integer
               required:
                 - board
-                - nextTaskNumber
       responses:
         '200':
           description: OK
@@ -215,8 +251,113 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '500':
-          description: Ошибка сервера
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Проект не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/projects/{projectId}/tasks:
+    get:
+      summary: Получить все задачи проекта
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '400':
+          description: Некорректный projectId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Проект не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/board:
+    get:
+      summary: Получить доску проекта (legacy route)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoardResponse'
+        '400':
+          description: Не указан projectId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Обновить доску проекта (legacy route)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                board:
+                  $ref: '#/components/schemas/Board'
+              required:
+                - board
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          description: Некорректные данные
           content:
             application/json:
               schema:
@@ -360,6 +501,22 @@ paths:
       summary: Получить все задачи
       security:
         - cookieAuth: []
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: columnId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
         '200':
           description: OK
@@ -390,14 +547,31 @@ paths:
                   type: string
                 text:
                   type: string
+                description:
+                  type: string
                 stat:
                   type: string
                 priority:
                   type: string
                 columnId:
                   type: integer
-              required:
-                - title
+                columnClientId:
+                  type: string
+                projectId:
+                  type: integer
+                column_id:
+                  type: integer
+                column_client_id:
+                  type: string
+                project_id:
+                  type: integer
+                tags:
+                  type: array
+                  items:
+                    type: string
+              oneOf:
+                - required: [title, projectId]
+                - required: [title, project_id]
       responses:
         '201':
           description: Создано
@@ -474,6 +648,16 @@ paths:
                   type: string
                 columnId:
                   type: integer
+                projectId:
+                  type: integer
+                column_id:
+                  type: integer
+                project_id:
+                  type: integer
+                tags:
+                  type: array
+                  items:
+                    type: string
       responses:
         '200':
           description: OK

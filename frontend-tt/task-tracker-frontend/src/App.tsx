@@ -28,6 +28,77 @@ function createId() {
 
 const EMPTY_BOARD: KanbanBoard = { columns: [], cards: {} };
 
+function normalizePriority(value: unknown): Priority {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "low") return "Low";
+  if (normalized === "high") return "High";
+  return "Medium";
+}
+
+function normalizeNonNegativeInt(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.trunc(parsed);
+}
+
+function sanitizeBoard(rawBoard: KanbanBoard): KanbanBoard {
+  const rawCards = rawBoard && typeof rawBoard === "object" && rawBoard.cards ? rawBoard.cards : {};
+  const cards: Record<string, KanbanCard> = {};
+  let fallbackTaskNumber = 1;
+
+  for (const [key, rawCard] of Object.entries(rawCards)) {
+    const source = rawCard as Partial<KanbanCard> | undefined;
+    const id = String(source?.id ?? key);
+    const taskNumberRaw = Number(source?.taskNumber);
+    const taskNumber = Number.isFinite(taskNumberRaw) && taskNumberRaw > 0
+      ? Math.trunc(taskNumberRaw)
+      : fallbackTaskNumber;
+    fallbackTaskNumber = Math.max(fallbackTaskNumber, taskNumber + 1);
+
+    cards[id] = {
+      id,
+      taskNumber,
+      title: String(source?.title ?? "Untitled task"),
+      customer: source?.customer?.name ? { name: String(source.customer.name) } : undefined,
+      description: String(source?.description ?? ""),
+      tags: Array.isArray(source?.tags)
+        ? source.tags.map((tag) => String(tag ?? "").trim()).filter(Boolean)
+        : [],
+      priority: normalizePriority(source?.priority),
+      plannedDate: source?.plannedDate ? String(source.plannedDate) : undefined,
+      durationWeeks: normalizeNonNegativeInt(source?.durationWeeks),
+      durationDays: normalizeNonNegativeInt(source?.durationDays),
+      assignee: source?.assignee?.name
+        ? {
+          name: String(source.assignee.name),
+          initials: String(source.assignee.initials ?? makeInitials(String(source.assignee.name))),
+        }
+        : undefined,
+    };
+  }
+
+  const rawColumns = Array.isArray(rawBoard?.columns) ? rawBoard.columns : [];
+  const columns = rawColumns.map((column) => {
+    const columnId = String(column?.id ?? "");
+    const title = String(column?.title ?? "").trim() || "Untitled column";
+    const cardIds = Array.isArray(column?.cardIds)
+      ? column.cardIds.map((id) => String(id)).filter((id) => Boolean(cards[id]))
+      : [];
+
+    return { id: columnId, title, cardIds };
+  });
+
+  return { columns, cards };
+}
+
+function calcNextTaskNumber(board: KanbanBoard, remoteNextTaskNumber: number) {
+  const maxFromCards = Object.values(board.cards).reduce((max, card) => Math.max(max, card.taskNumber), 0);
+  const normalizedRemote = Number.isFinite(Number(remoteNextTaskNumber))
+    ? Math.max(1, Math.trunc(Number(remoteNextTaskNumber)))
+    : 1;
+  return Math.max(normalizedRemote, maxFromCards + 1);
+}
+
 function setHash(hash: string) {
   const normalized = hash.startsWith("#") ? hash : `#${hash}`;
   if (window.location.hash !== normalized) window.location.hash = normalized;
@@ -241,8 +312,9 @@ export default function App() {
       .getBoard(activeProjectId)
       .then(({ board: remoteBoard, nextTaskNumber: remoteNext }) => {
         if (canceled) return;
-        setBoard(remoteBoard);
-        setNextTaskNumber(remoteNext);
+        const normalizedBoard = sanitizeBoard(remoteBoard);
+        setBoard(normalizedBoard);
+        setNextTaskNumber(calcNextTaskNumber(normalizedBoard, remoteNext));
       })
       .catch((error) => {
         if (canceled) return;
