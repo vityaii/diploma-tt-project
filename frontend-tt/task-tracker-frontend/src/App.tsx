@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { GanttPage } from "./pages/gantt/GanttPage";
 import { KanbanPage } from "./pages/kanban/KanbanPage";
@@ -7,7 +7,8 @@ import { normalizeWeekDayDuration } from "./pages/kanban/planning";
 import { TaskPage } from "./pages/task/TaskPage";
 import { ProjectsPage } from "./pages/projects/ProjectsPage";
 import { authApi, UnauthorizedError, type AuthSession } from "./api/client";
-import { ttApi, type Project } from "./api/ttApi";
+import { ttApi, type ChangelogEntry, type Project } from "./api/ttApi";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 function makeInitials(name: string) {
   const parts = name
@@ -27,6 +28,9 @@ function createId() {
 }
 
 const EMPTY_BOARD: KanbanBoard = { columns: [], cards: {} };
+const THEME_STORAGE_KEY = "tt-theme";
+
+type ThemeMode = "light" | "dark";
 
 function normalizePriority(value: unknown): Priority {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -104,6 +108,17 @@ function setHash(hash: string) {
   if (window.location.hash !== normalized) window.location.hash = normalized;
 }
 
+function getInitialTheme(): ThemeMode {
+  try {
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (storedTheme === "light" || storedTheme === "dark") return storedTheme;
+  } catch {
+    // Ignore storage failures and fall back to system preference.
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function useHashRoute() {
   const [hash, setHashState] = useState(() => window.location.hash || "#/");
 
@@ -130,6 +145,7 @@ function FullScreenMessage({ message }: { message: string }) {
 
 export default function App() {
   const hash = useHashRoute();
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => authApi.getSession());
   const [authReady, setAuthReady] = useState(false);
@@ -145,6 +161,8 @@ export default function App() {
   const persistTimerRef = useRef<number | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [changelog, setChangelog] = useState<ChangelogEntry[]>([]);
+  const [changelogLoaded, setChangelogLoaded] = useState(false);
 
   const clearWorkspaceState = useCallback(() => {
     if (persistTimerRef.current) {
@@ -157,6 +175,8 @@ export default function App() {
     setBoardLoaded(false);
     setProjects([]);
     setProjectsLoaded(false);
+    setChangelog([]);
+    setChangelogLoaded(false);
   }, []);
 
   const getErrorMessage = useCallback((error: unknown, fallback: string) => {
@@ -187,6 +207,15 @@ export default function App() {
   useEffect(() => {
     nextTaskNumberRef.current = nextTaskNumber;
   }, [nextTaskNumber]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore storage failures and keep the active theme in memory.
+    }
+  }, [theme]);
 
   useEffect(() => {
     let canceled = false;
@@ -254,6 +283,24 @@ export default function App() {
     }
   }, [handleSignedOut]);
 
+  const loadChangelog = useCallback(
+    async (limit = 30) => {
+      try {
+        const items = await ttApi.getChangelog(limit);
+        setChangelog(items);
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          handleUnauthorized();
+          return;
+        }
+        console.error("Failed to load changelog:", error);
+      } finally {
+        setChangelogLoaded(true);
+      }
+    },
+    [handleUnauthorized],
+  );
+
   useEffect(() => {
     if (!authReady) return;
     if (!authSession) {
@@ -281,6 +328,40 @@ export default function App() {
       .finally(() => {
         if (canceled) return;
         setProjectsLoaded(true);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [authReady, authSession, handleUnauthorized]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (!authSession) {
+      setChangelogLoaded(true);
+      return;
+    }
+
+    let canceled = false;
+    setChangelogLoaded(false);
+
+    ttApi
+      .getChangelog()
+      .then((items) => {
+        if (canceled) return;
+        setChangelog(items);
+      })
+      .catch((error) => {
+        if (canceled) return;
+        if (error instanceof UnauthorizedError) {
+          handleUnauthorized();
+          return;
+        }
+        console.error("Failed to load changelog:", error);
+      })
+      .finally(() => {
+        if (canceled) return;
+        setChangelogLoaded(true);
       });
 
     return () => {
@@ -339,19 +420,24 @@ export default function App() {
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
 
     persistTimerRef.current = window.setTimeout(() => {
-      ttApi.putBoard(activeProjectId, { board, nextTaskNumber }).catch((error) => {
-        if (error instanceof UnauthorizedError) {
-          handleUnauthorized();
-          return;
-        }
-        console.error("Failed to save board to backend:", error);
-      });
+      ttApi
+        .putBoard(activeProjectId, { board, nextTaskNumber })
+        .then(() => {
+          void loadChangelog();
+        })
+        .catch((error) => {
+          if (error instanceof UnauthorizedError) {
+            handleUnauthorized();
+            return;
+          }
+          console.error("Failed to save board to backend:", error);
+        });
     }, 250);
 
     return () => {
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     };
-  }, [authSession, activeProjectId, board, boardLoaded, nextTaskNumber, handleUnauthorized]);
+  }, [authSession, activeProjectId, board, boardLoaded, nextTaskNumber, handleUnauthorized, loadChangelog]);
 
   const saveTask = useMemo(() => {
     type Draft = {
@@ -459,12 +545,12 @@ export default function App() {
     };
   }, []);
 
-  if (!authReady) {
-    return <FullScreenMessage message="Checking session…" />;
-  }
+  let content: ReactNode;
 
-  if (!authSession) {
-    return (
+  if (!authReady) {
+    content = <FullScreenMessage message="Checking session…" />;
+  } else if (!authSession) {
+    content = (
       <AuthPage
         busy={authBusy}
         error={authError}
@@ -473,14 +559,10 @@ export default function App() {
         onRegister={handleRegister}
       />
     );
-  }
-
-  if (activeProjectId && Number.isNaN(activeProjectId)) {
-    return <FullScreenMessage message="Invalid project." />;
-  }
-
-  if (activeTaskId && activeProjectId) {
-    return (
+  } else if (activeProjectId && Number.isNaN(activeProjectId)) {
+    content = <FullScreenMessage message="Invalid project." />;
+  } else if (activeTaskId && activeProjectId) {
+    content = (
       <TaskPage
         taskId={activeTaskId}
         board={board}
@@ -493,71 +575,78 @@ export default function App() {
         onLogout={handleLogout}
       />
     );
-  }
-
-  if (activeProjectId) {
+  } else if (activeProjectId) {
     if (!boardLoaded) {
-      return <FullScreenMessage message="Loading board…" />;
-    }
+      content = <FullScreenMessage message="Loading board…" />;
+    } else {
+      const currentProject = projects.find((project) => project.id === activeProjectId);
 
-    const currentProject = projects.find((project) => project.id === activeProjectId);
-    if (projectsLoaded && !currentProject) {
-      return <FullScreenMessage message="Project not found." />;
+      if (projectsLoaded && !currentProject) {
+        content = <FullScreenMessage message="Project not found." />;
+      } else if (isGanttRoute) {
+        content = (
+          <GanttPage
+            board={board}
+            projectName={currentProject?.name ?? "Project"}
+            projectTheme={currentProject?.theme ?? ""}
+            username={authSession.username}
+            logoutPending={logoutPending}
+            onOpenProjects={() => setHash("#/")}
+            onOpenBoard={() => setHash(`#/project/${activeProjectId}`)}
+            onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
+            onLogout={handleLogout}
+          />
+        );
+      } else {
+        content = (
+          <KanbanPage
+            board={board}
+            onBoardChange={setBoard}
+            onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
+            projectName={currentProject?.name ?? "Project"}
+            projectTheme={currentProject?.theme ?? ""}
+            currentUser={authSession.username}
+            logoutPending={logoutPending}
+            onOpenProjects={() => setHash("#/")}
+            onOpenGantt={() => setHash(`#/project/${activeProjectId}/gantt`)}
+            onLogout={handleLogout}
+          />
+        );
+      }
     }
-
-    if (isGanttRoute) {
-      return (
-        <GanttPage
-          board={board}
-          projectName={currentProject?.name ?? "Project"}
-          projectTheme={currentProject?.theme ?? ""}
-          username={authSession.username}
-          logoutPending={logoutPending}
-          onOpenProjects={() => setHash("#/")}
-          onOpenBoard={() => setHash(`#/project/${activeProjectId}`)}
-          onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
-          onLogout={handleLogout}
-        />
-      );
-    }
-
-    return (
-      <KanbanPage
-        board={board}
-        onBoardChange={setBoard}
-        onOpenTask={(taskId) => setHash(`#/project/${activeProjectId}/task/${encodeURIComponent(taskId)}`)}
-        projectName={currentProject?.name ?? "Project"}
-        projectTheme={currentProject?.theme ?? ""}
+  } else {
+    content = (
+      <ProjectsPage
+        projects={projects}
+        loading={!projectsLoaded}
+        changelog={changelog}
+        changelogLoading={!changelogLoaded}
         currentUser={authSession.username}
         logoutPending={logoutPending}
-        onOpenProjects={() => setHash("#/")}
-        onOpenGantt={() => setHash(`#/project/${activeProjectId}/gantt`)}
+        onOpenProject={(projectId) => setHash(`#/project/${projectId}`)}
+        onCreateProject={async ({ name, theme }) => {
+          try {
+            const created = await ttApi.createProject({ name, theme });
+            setProjects((prev) => [...prev, created]);
+            void loadChangelog();
+            return created;
+          } catch (error) {
+            if (error instanceof UnauthorizedError) {
+              handleUnauthorized();
+              return null;
+            }
+            throw error;
+          }
+        }}
         onLogout={handleLogout}
       />
     );
   }
 
   return (
-    <ProjectsPage
-      projects={projects}
-      loading={!projectsLoaded}
-      currentUser={authSession.username}
-      logoutPending={logoutPending}
-      onOpenProject={(projectId) => setHash(`#/project/${projectId}`)}
-      onCreateProject={async ({ name, theme }) => {
-        try {
-          const created = await ttApi.createProject({ name, theme });
-          setProjects((prev) => [...prev, created]);
-          return created;
-        } catch (error) {
-          if (error instanceof UnauthorizedError) {
-            handleUnauthorized();
-            return null;
-          }
-          throw error;
-        }
-      }}
-      onLogout={handleLogout}
-    />
+    <>
+      {content}
+      <ThemeToggle theme={theme} onToggle={() => setTheme((current) => (current === "dark" ? "light" : "dark"))} />
+    </>
   );
 }

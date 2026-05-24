@@ -62,6 +62,15 @@ const CREATE_TABLE_STATEMENTS = [
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `,
+  `
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id SERIAL PRIMARY KEY,
+      event_type VARCHAR(64) NOT NULL,
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `,
 ];
 
 const ALTER_TABLE_STATEMENTS = [
@@ -116,6 +125,9 @@ const ALTER_TABLE_STATEMENTS = [
     NOT VALID;
   `,
   `ALTER TABLE tasks VALIDATE CONSTRAINT tasks_project_column_fk;`,
+  `ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`,
+  `ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;`,
+  `ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW();`,
 ];
 
 const DROP_INDEX_STATEMENTS = [
@@ -125,6 +137,7 @@ const DROP_INDEX_STATEMENTS = [
   `DROP INDEX IF EXISTS tasks_user_id_client_id_idx;`,
   `DROP INDEX IF EXISTS tasks_user_id_task_number_idx;`,
   `DROP INDEX IF EXISTS board_state_project_id_idx;`,
+  `DROP INDEX IF EXISTS activity_log_created_at_idx;`,
 ];
 
 const CREATE_INDEX_STATEMENTS = [
@@ -155,6 +168,10 @@ const CREATE_INDEX_STATEMENTS = [
     CREATE UNIQUE INDEX IF NOT EXISTS board_state_project_id_idx
     ON board_state(project_id)
     WHERE project_id IS NOT NULL;
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS activity_log_created_at_idx
+    ON activity_log(created_at DESC, id DESC);
   `,
 ];
 

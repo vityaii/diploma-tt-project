@@ -1,10 +1,13 @@
 import { useState } from "react";
-import type { Project } from "../../api/ttApi";
+import type { ChangelogEntry, Project } from "../../api/ttApi";
+import { ChangelogPanel } from "../../components/ChangelogPanel";
 import { SessionControls } from "../../components/SessionControls";
 
 type Props = {
   projects: Project[];
   loading: boolean;
+  changelog: ChangelogEntry[];
+  changelogLoading: boolean;
   currentUser: string;
   logoutPending?: boolean;
   onCreateProject: (input: { name: string; theme: string }) => Promise<Project | null>;
@@ -15,6 +18,8 @@ type Props = {
 export function ProjectsPage({
   projects,
   loading,
+  changelog,
+  changelogLoading,
   currentUser,
   logoutPending = false,
   onCreateProject,
@@ -22,6 +27,7 @@ export function ProjectsPage({
   onLogout,
 }: Props) {
   const [formOpen, setFormOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [name, setName] = useState("");
   const [theme, setTheme] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -63,48 +69,76 @@ export function ProjectsPage({
   return (
     <div className="min-h-screen bg-neutral-100">
       <div className="mx-auto flex min-h-screen max-w-[1100px] flex-col px-6 py-8">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">Projects</h1>
             <p className="mt-0.5 text-sm text-neutral-500">Choose a project or create a new one.</p>
           </div>
 
-          <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-col items-stretch gap-3 lg:items-end">
             <SessionControls
               username={currentUser}
               onLogout={onLogout}
               disabled={logoutPending}
             />
 
-            <div className="relative w-full max-w-[320px]">
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400"
-              >
-                <path
-                  fill="currentColor"
-                  d="M10 4a6 6 0 1 1 0 12a6 6 0 0 1 0-12m0-2a8 8 0 1 0 4.9 14.3l4.4 4.4a1 1 0 0 0 1.4-1.4l-4.4-4.4A8 8 0 0 0 10 2"
+            <div className="relative flex flex-wrap items-center gap-2 lg:flex-nowrap">
+              <div className="relative min-w-0 flex-1 lg:w-[320px] lg:flex-none">
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400"
+                >
+                  <path
+                    fill="currentColor"
+                    d="M10 4a6 6 0 1 1 0 12a6 6 0 0 1 0-12m0-2a8 8 0 1 0 4.9 14.3l4.4 4.4a1 1 0 0 0 1.4-1.4l-4.4-4.4A8 8 0 0 0 10 2"
+                  />
+                </svg>
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-neutral-200 bg-white pl-9 pr-3 text-sm outline-none shadow-sm focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
+                  placeholder="Search projects…"
                 />
-              </svg>
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 w-full rounded-xl border border-neutral-200 bg-white pl-9 pr-3 text-sm outline-none shadow-sm focus:border-neutral-300 focus:ring-4 focus:ring-neutral-200/60"
-                placeholder="Search projects…"
-              />
-            </div>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => setFormOpen((v) => !v)}
-              className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-3 text-sm text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-white">
-                <path fill="currentColor" d="M11 5h2v14h-2zM5 11h14v2H5z" />
-              </svg>
-              New project
-            </button>
+              <div className="relative flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setChangelogOpen((current) => !current)}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 shadow-sm hover:bg-neutral-50 focus:outline-none focus:ring-4 focus:ring-neutral-200/60"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-neutral-500">
+                    <path fill="currentColor" d="M5 5h14v2H5zm0 6h14v2H5zm0 6h10v2H5z" />
+                  </svg>
+                  Changelog
+                  <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs font-medium text-neutral-600">
+                    {changelog.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setFormOpen((v) => !v)}
+                  className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-3 text-sm text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-300"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-white">
+                    <path fill="currentColor" d="M11 5h2v14h-2zM5 11h14v2H5z" />
+                  </svg>
+                  New project
+                </button>
+
+                {changelogOpen && (
+                  <div className="absolute right-0 top-full z-30 mt-3 w-[min(400px,calc(100vw-3rem))]">
+                    <ChangelogPanel
+                      entries={changelog}
+                      loading={changelogLoading}
+                      onClose={() => setChangelogOpen(false)}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -155,11 +189,11 @@ export function ProjectsPage({
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {loading ? (
-            <div className="rounded-3xl border border-neutral-200 bg-white p-6 text-sm text-neutral-600 shadow-sm">
+            <div className="rounded-3xl border border-neutral-200 bg-white p-6 text-sm text-neutral-600 shadow-sm md:col-span-2">
               Loading projects…
             </div>
           ) : filteredProjects.length === 0 ? (
-            <div className="rounded-3xl border border-neutral-200 bg-white p-6 text-sm text-neutral-600 shadow-sm">
+            <div className="rounded-3xl border border-neutral-200 bg-white p-6 text-sm text-neutral-600 shadow-sm md:col-span-2">
               {projects.length === 0
                 ? "No projects yet. Create the first one."
                 : "No projects match your search."}

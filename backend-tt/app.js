@@ -68,6 +68,35 @@ function defineModels(sequelizeInstance) {
     timestamps: false,
   });
 
+  const ActivityLog = sequelizeInstance.models.ActivityLog || sequelizeInstance.define('ActivityLog', {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+    event_type: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    actor_user_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    metadata: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: {},
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+    },
+  }, {
+    tableName: 'activity_log',
+    timestamps: false,
+  });
+
   const BoardState = sequelizeInstance.models.BoardState || sequelizeInstance.define('BoardState', {
     id: {
       type: DataTypes.INTEGER,
@@ -233,8 +262,10 @@ function defineModels(sequelizeInstance) {
   Project.hasMany(Task, { foreignKey: 'project_id' });
   Column.belongsTo(Project, { foreignKey: 'project_id' });
   Task.belongsTo(Project, { foreignKey: 'project_id' });
+  User.hasMany(ActivityLog, { foreignKey: 'actor_user_id' });
+  ActivityLog.belongsTo(User, { foreignKey: 'actor_user_id' });
 
-  return { Task, Column, BoardState, User, Project };
+  return { Task, Column, BoardState, User, Project, ActivityLog };
 }
 
 const app = express();
@@ -392,6 +423,85 @@ function parsePlanningPayload(body, base = {}) {
   };
 }
 
+function getTaskComparableState(taskLike) {
+  return {
+    title: String(taskLike?.title ?? '').trim(),
+    text: String(taskLike?.text ?? ''),
+    stat: String(taskLike?.stat ?? ''),
+    priority: normalizePriorityForStorage(taskLike?.priority),
+    column_id: Number.isFinite(Number(taskLike?.column_id)) ? Number(taskLike.column_id) : null,
+    project_id: Number.isFinite(Number(taskLike?.project_id)) ? Number(taskLike.project_id) : null,
+    position: Number.isFinite(Number(taskLike?.position)) ? Number(taskLike.position) : 0,
+    task_number: Number.isFinite(Number(taskLike?.task_number)) ? Number(taskLike.task_number) : null,
+    customer_name: normalizeNullableText(taskLike?.customer_name),
+    assignee_name: normalizeNullableText(taskLike?.assignee_name),
+    assignee_initials: normalizeNullableText(taskLike?.assignee_initials),
+    planned_date: normalizeDateOnly(taskLike?.planned_date),
+    duration_weeks: coerceNonNegativeInteger(taskLike?.duration_weeks),
+    duration_days: coerceNonNegativeInteger(taskLike?.duration_days),
+    tags: normalizeTags(taskLike?.tags),
+  };
+}
+
+function taskStatesEqual(left, right) {
+  if (!left || !right) return false;
+
+  for (const key of [
+    'title',
+    'text',
+    'stat',
+    'priority',
+    'column_id',
+    'project_id',
+    'position',
+    'task_number',
+    'customer_name',
+    'assignee_name',
+    'assignee_initials',
+    'planned_date',
+    'duration_weeks',
+    'duration_days',
+  ]) {
+    if (left[key] !== right[key]) return false;
+  }
+
+  if (left.tags.length !== right.tags.length) return false;
+  return left.tags.every((tag, index) => tag === right.tags[index]);
+}
+
+async function resolveActorUsername(User, userId, fallbackUsername, transaction) {
+  if (fallbackUsername && String(fallbackUsername).trim()) {
+    return String(fallbackUsername).trim();
+  }
+  if (!Number.isInteger(Number(userId)) || Number(userId) < 1) return null;
+
+  const user = await User.findByPk(userId, {
+    transaction,
+    attributes: ['username'],
+  });
+  return user?.username ?? null;
+}
+
+async function createActivityLog(ActivityLog, payload, transaction) {
+  const metadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+  return ActivityLog.create({
+    event_type: payload.eventType,
+    actor_user_id: payload.actorUserId ?? null,
+    metadata,
+  }, { transaction });
+}
+
+function buildTaskActivityMetadata(task, context) {
+  return {
+    actorUsername: context.actorUsername ?? null,
+    projectId: context.projectId,
+    projectName: context.projectName,
+    taskId: task.id,
+    taskTitle: task.title,
+    taskNumber: Number.isFinite(Number(task.task_number)) ? Number(task.task_number) : null,
+  };
+}
+
 async function ensureProjectExists(Project, projectId, transaction) {
   const project = await Project.findByPk(projectId, { transaction });
   if (!project) {
@@ -469,21 +579,23 @@ async function getNextTaskPosition(Task, projectId, columnId, transaction) {
   return Number.isFinite(Number(maxPosition)) ? Number(maxPosition) + 1 : 0;
 }
 
-async function syncBoardToTables(sequelize, board, projectId, userId) {
-  const { Column, Task } = sequelize.models;
+async function syncBoardToTables(sequelize, board, projectId, actor) {
+  const { Column, Task, User, ActivityLog } = sequelize.models;
   const normalizedProjectId = Number(projectId);
   if (!Number.isFinite(normalizedProjectId)) {
     throw new Error('Invalid projectId for board sync');
   }
-  const normalizedUserId = Number(userId);
+  const normalizedUserId = Number(actor?.userId);
   if (!Number.isFinite(normalizedUserId)) {
     throw new Error('Invalid userId for board sync');
   }
+  const normalizedProjectName = String(actor?.projectName ?? '').trim() || 'Project';
 
   const inputColumns = Array.isArray(board.columns) ? board.columns : [];
   const inputCards = board.cards && typeof board.cards === 'object' ? board.cards : {};
 
   await sequelize.transaction(async (t) => {
+    const actorUsername = await resolveActorUsername(User, normalizedUserId, actor?.username, t);
     const [existingColumns, existingTasks] = await Promise.all([
       Column.findAll({
         where: { project_id: normalizedProjectId },
@@ -598,6 +710,7 @@ async function syncBoardToTables(sequelize, board, projectId, userId) {
         duration_days: planning.durationDays,
         tags: normalizeTags(rawCard.tags),
       };
+      const nextTaskState = getTaskComparableState(patch);
 
       if (!existingTask) {
         const created = await Task.create({
@@ -605,14 +718,42 @@ async function syncBoardToTables(sequelize, board, projectId, userId) {
           user_id: normalizedUserId,
           client_id: isPositiveIntLike(boardCardId) ? null : boardCardId,
         }, { transaction: t });
+        await createActivityLog(ActivityLog, {
+          eventType: 'task_created',
+          actorUserId: normalizedUserId,
+          metadata: buildTaskActivityMetadata(created, {
+            actorUsername,
+            projectId: normalizedProjectId,
+            projectName: normalizedProjectName,
+          }),
+        }, t);
         desiredTaskDbIds.add(created.id);
         continue;
       }
 
+      const previousTaskState = getTaskComparableState(existingTask);
+      const meaningfulChange = !taskStatesEqual(previousTaskState, nextTaskState);
+
       if (!existingTask.client_id && !isPositiveIntLike(boardCardId)) {
         patch.client_id = boardCardId;
       }
+      if (!meaningfulChange && (patch.client_id ?? null) === (existingTask.client_id ?? null)) {
+        desiredTaskDbIds.add(existingTask.id);
+        continue;
+      }
+
       await existingTask.update(patch, { transaction: t });
+      if (meaningfulChange) {
+        await createActivityLog(ActivityLog, {
+          eventType: 'task_updated',
+          actorUserId: normalizedUserId,
+          metadata: buildTaskActivityMetadata(existingTask, {
+            actorUsername,
+            projectId: normalizedProjectId,
+            projectName: normalizedProjectName,
+          }),
+        }, t);
+      }
       desiredTaskDbIds.add(existingTask.id);
     }
 
@@ -729,6 +870,23 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/changelog', requireAuth, async (req, res) => {
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.trunc(rawLimit))) : 30;
+
+  try {
+    const sequelize = getBaseSequelize();
+    const { ActivityLog } = sequelize.models;
+    const entries = await ActivityLog.findAll({
+      order: [['created_at', 'DESC'], ['id', 'DESC']],
+      limit,
+    });
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/projects', requireAuth, async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
@@ -748,10 +906,20 @@ app.post('/api/projects', requireAuth, async (req, res) => {
   }
   try {
     const sequelize = getBaseSequelize();
-    const { Project, Column } = sequelize.models;
+    const { Project, Column, User, ActivityLog } = sequelize.models;
     const createdProject = await sequelize.transaction(async (transaction) => {
       const project = await Project.create({ name, theme }, { transaction });
       await ensureDefaultColumnsForProject(Column, project.id, transaction);
+      const actorUsername = await resolveActorUsername(User, req.auth.userId, req.auth.username, transaction);
+      await createActivityLog(ActivityLog, {
+        eventType: 'project_created',
+        actorUserId: req.auth.userId,
+        metadata: {
+          actorUsername,
+          projectId: project.id,
+          projectName: project.name,
+        },
+      }, transaction);
       return project;
     });
     res.status(201).json(createdProject);
@@ -811,9 +979,13 @@ app.put('/api/projects/:projectId/board', requireAuth, async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
     const { Project, Column } = sequelize.models;
-    await ensureProjectExists(Project, projectId);
+    const project = await ensureProjectExists(Project, projectId);
     await ensureDefaultColumnsForProject(Column, projectId);
-    await syncBoardToTables(sequelize, board, projectId, req.auth.userId);
+    await syncBoardToTables(sequelize, board, projectId, {
+      userId: req.auth.userId,
+      username: req.auth.username,
+      projectName: project.name,
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -853,9 +1025,13 @@ app.put('/api/board', requireAuth, async (req, res) => {
   try {
     const sequelize = getBaseSequelize();
     const { Project, Column } = sequelize.models;
-    await ensureProjectExists(Project, projectId);
+    const project = await ensureProjectExists(Project, projectId);
     await ensureDefaultColumnsForProject(Column, projectId);
-    await syncBoardToTables(sequelize, board, projectId, req.auth.userId);
+    await syncBoardToTables(sequelize, board, projectId, {
+      userId: req.auth.userId,
+      username: req.auth.username,
+      projectName: project.name,
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -1103,9 +1279,9 @@ app.post('/tasks', requireAuth, async (req, res) => {
   }
 
   try {
-    const { Task, Column, Project, sequelize } = await getModelsForReq(req);
+    const { Task, Column, Project, User, ActivityLog, sequelize } = await getModelsForReq(req);
     const task = await sequelize.transaction(async (transaction) => {
-      await ensureProjectExists(Project, projectId, transaction);
+      const project = await ensureProjectExists(Project, projectId, transaction);
       const resolvedColumn = await resolveColumnForTask(Column, projectId, req.body, transaction, {
         requireExplicitColumn: false,
       });
@@ -1125,7 +1301,7 @@ app.post('/tasks', requireAuth, async (req, res) => {
         (assigneeName ? assigneeName.slice(0, 2).toUpperCase() : null),
       );
 
-      return Task.create({
+      const createdTask = await Task.create({
         user_id: req.auth.userId,
         title,
         text: String(req.body?.text ?? req.body?.description ?? ''),
@@ -1143,6 +1319,19 @@ app.post('/tasks', requireAuth, async (req, res) => {
         duration_weeks: planning.provided ? planning.durationWeeks : 0,
         duration_days: planning.provided ? planning.durationDays : 0,
       }, { transaction });
+
+      const actorUsername = await resolveActorUsername(User, req.auth.userId, req.auth.username, transaction);
+      await createActivityLog(ActivityLog, {
+        eventType: 'task_created',
+        actorUserId: req.auth.userId,
+        metadata: buildTaskActivityMetadata(createdTask, {
+          actorUsername,
+          projectId: project.id,
+          projectName: project.name,
+        }),
+      }, transaction);
+
+      return createdTask;
     });
 
     res.status(201).json(task);
@@ -1201,7 +1390,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
   }
 
   try {
-    const { Task, Column, Project, sequelize } = await getModelsForReq(req);
+    const { Task, Column, Project, User, ActivityLog, sequelize } = await getModelsForReq(req);
     const updatedTask = await sequelize.transaction(async (transaction) => {
       const task = await Task.findOne({
         where: { id: req.params.id },
@@ -1212,6 +1401,7 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
         err.status = 404;
         throw err;
       }
+      const previousTaskState = getTaskComparableState(task);
 
       const nextProjectId = hasProjectUpdate ? projectIdInput : task.project_id;
       if (!Number.isInteger(nextProjectId) || nextProjectId < 1) {
@@ -1285,7 +1475,24 @@ app.put('/tasks/:id', requireAuth, async (req, res) => {
         task.tags = normalizeTags(req.body.tags);
       }
 
-      await task.save({ transaction });
+      const nextTaskState = getTaskComparableState(task);
+      const meaningfulChange = !taskStatesEqual(previousTaskState, nextTaskState);
+
+      if (meaningfulChange) {
+        await task.save({ transaction });
+        const actorUsername = await resolveActorUsername(User, req.auth.userId, req.auth.username, transaction);
+        const project = await ensureProjectExists(Project, nextProjectId, transaction);
+        await createActivityLog(ActivityLog, {
+          eventType: 'task_updated',
+          actorUserId: req.auth.userId,
+          metadata: buildTaskActivityMetadata(task, {
+            actorUsername,
+            projectId: project.id,
+            projectName: project.name,
+          }),
+        }, transaction);
+      }
+
       return task;
     });
 

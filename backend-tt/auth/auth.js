@@ -69,6 +69,18 @@ router.post(
       );
 
       const newUser = rows[0]; // содержит id и username
+      await pool.query(
+        'INSERT INTO activity_log (event_type, actor_user_id, metadata) VALUES ($1, $2, $3::jsonb)',
+        [
+          'user_created',
+          newUser.id,
+          JSON.stringify({
+            actorUsername: newUser.username,
+            targetUsername: newUser.username,
+            targetUserId: newUser.id,
+          }),
+        ]
+      );
       req.session.regenerate(err => {
         if (err) return next(err);
         req.session.userId = newUser.id;
