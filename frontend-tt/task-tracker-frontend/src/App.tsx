@@ -552,6 +552,7 @@ export default function App() {
   } else if (!authSession) {
     content = (
       <AuthPage
+        theme={theme}
         busy={authBusy}
         error={authError}
         notice={authNotice}

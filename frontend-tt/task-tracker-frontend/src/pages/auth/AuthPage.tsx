@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 type Mode = "login" | "register";
 
 type Props = {
+  theme: "light" | "dark";
   busy: boolean;
   error: string | null;
   notice?: string | null;
@@ -25,7 +26,7 @@ const featureCards = [
   },
 ];
 
-export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
+export function AuthPage({ theme, busy, error, notice, onLogin, onRegister }: Props) {
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -86,7 +87,10 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                   Task Tracker
                 </h1>
 
-                <p className="mt-4 max-w-[58ch] text-sm leading-6 text-white/70 md:text-base">
+                <p
+                  className="mt-4 max-w-[58ch] text-sm leading-6 text-white/70 md:text-base"
+                  style={theme === "dark" ? { color: "#f8fafc" } : undefined}
+                >
                   Войдите или зарегистрируйтесь, чтобы начать использовать Task Tracker — инструмент для управления задачами и проектами. Task Tracker поможет вам организовать рабочий процесс, улучшить коммуникацию в команде и повысить продуктивность.
                 </p>
               </div>
@@ -111,7 +115,10 @@ export function AuthPage({ busy, error, notice, onLogin, onRegister }: Props) {
                 <div className="text-sm font-medium uppercase tracking-[0.24em] text-neutral-400">
                   Access
                 </div>
-                <h2 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
+                <h2
+                  className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950"
+                  style={theme === "dark" ? { color: "#f8fafc" } : undefined}
+                >
                   {title}
                 </h2>
               </div>
