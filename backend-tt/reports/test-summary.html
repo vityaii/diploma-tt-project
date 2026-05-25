@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Отчет о модульном тестировании</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --text: #111827;
+      --muted: #5b6472;
+      --border: #d7dce3;
+      --pass: #0f8a4b;
+      --fail: #c2410c;
+      --skip: #6b7280;
+      --card: #ffffff;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      max-width: 1180px;
+      margin: 40px auto;
+      padding: 0 24px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+    .muted {
+      color: var(--muted);
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card strong {
+      display: block;
+      font-size: 28px;
+      margin-top: 4px;
+    }
+    .bar {
+      height: 14px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 10px 0 24px;
+    }
+    .bar span {
+      display: block;
+      height: 100%;
+      width: 100%;
+      background: var(--pass);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 28px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #eef1f5;
+      font-weight: 700;
+    }
+    .scenario-table th {
+      background: #dcefd5;
+      color: #111827;
+    }
+    .scenario-table .test-class {
+      background: #f4f5f7;
+      font-weight: 700;
+      text-align: center;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .scenario-table .test-method {
+      background: #ddd6ef;
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-weight: 700;
+      text-align: center;
+      vertical-align: middle;
+    }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 22px;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    .number {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .status {
+      display: inline-block;
+      min-width: 52px;
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .status-pass { background: var(--pass); }
+    .status-fail { background: var(--fail); }
+    .status-skip { background: var(--skip); }
+    .conclusion {
+      margin-top: 24px;
+      border-left: 4px solid var(--pass);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Отчет о модульном тестировании</h1>
+        <div class="muted">Дата формирования: 2026-05-25T19:28:13.348Z</div>
+      </div>
+      <span class="status status-pass">PASSED</span>
+    </header>
+
+    <section class="summary">
+      <div class="card">Всего тестов<strong>19</strong></div>
+      <div class="card">Успешно<strong>19</strong></div>
+      <div class="card">Ошибок<strong>0</strong></div>
+      <div class="card">Длительность, мс<strong>329.471292</strong></div>
+    </section>
+
+    <div class="muted">Доля успешно пройденных тестов: 100%</div>
+    <div class="bar"><span></span></div>
+
+    <h2>Таблица тестовых сценариев</h2>
+    <table class="scenario-table">
+      <thead>
+        <tr>
+          <th>Класс тестов</th>
+          <th>Проверяемый метод</th>
+          <th>Сценарий</th>
+          <th>Входные данные</th>
+          <th>Ожидаемый результат</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">registerUser()</td>
+          <td>Успешная регистрация нового пользователя</td>
+          <td>username = new_user, password = secret123; пользователь отсутствует в БД</td>
+          <td>Создан пользователь, записано событие user_created, возвращены accessToken и refreshToken</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">registerUser()</td>
+          <td>Попытка регистрации с уже занятым именем пользователя</td>
+          <td>username = busy_user; запрос SELECT возвращает rowCount = 1</td>
+          <td>Возвращается ошибка со статусом 409 и сообщением &quot;Имя пользователя занято&quot;</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">loginUser()</td>
+          <td>Успешный вход пользователя в систему</td>
+          <td>username = known_user, password = secret123; в БД хранится корректный password_hash</td>
+          <td>Пароль проходит проверку bcrypt, возвращаются данные пользователя и JWT-токены</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">loginUser()</td>
+          <td>Отказ при отсутствующем пользователе или неверном пароле</td>
+          <td>Пустой результат SELECT или password != password_hash</td>
+          <td>Возвращается ошибка со статусом 401 и сообщением &quot;Неверные учетные данные&quot;</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">changePassword()</td>
+          <td>Успешная смена пароля</td>
+          <td>userId = 21, oldPassword = old-secret, newPassword = new-secret</td>
+          <td>Старый пароль подтвержден, выполнен UPDATE users с новым bcrypt-хэшем</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">changePassword()</td>
+          <td>Отказ при неверном старом пароле</td>
+          <td>oldPassword = bad-secret, password_hash соответствует другому паролю</td>
+          <td>Возвращается ошибка со статусом 401 и сообщением &quot;Неверные учетные данные&quot;</td>
+        </tr>
+        <tr>
+          <td class="test-class">AuthServiceTest</td>
+          <td class="test-method">refreshAccessToken()</td>
+          <td>Обновление access token по refresh token</td>
+          <td>Корректный refreshToken и строка invalid.token.value</td>
+          <td>Для корректного refreshToken возвращается accessToken; для некорректного токена ошибка 401</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">ensureProjectExists()</td>
+          <td>Проверка существования проекта</td>
+          <td>projectId = 1 и projectId = 999</td>
+          <td>Для существующего проекта возвращается объект проекта; для отсутствующего проекта ошибка 404</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">ensureDefaultColumnsForProject()</td>
+          <td>Создание стандартных колонок доски</td>
+          <td>projectId = 3; первый count = 0, повторный count = 4</td>
+          <td>Для пустого проекта создаются todo, inprogress, review, done; повторное создание не выполняется</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">getNextTaskNumber(), getNextTaskPosition()</td>
+          <td>Расчет следующего номера задачи и позиции в колонке</td>
+          <td>max(task_number) = 8, max(id) = 12, max(position) = 3</td>
+          <td>Следующий номер задачи равен 13, следующая позиция равна 4</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">buildBoardFromTables()</td>
+          <td>Формирование структуры доски из колонок и задач</td>
+          <td>Колонки To Do и Done; одна задача в колонке, одна задача без актуальной колонки</td>
+          <td>Возвращается board с cardIds, cards и дополнительной колонкой Unassigned</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">getBoardPayload()</td>
+          <td>Получение данных доски проекта</td>
+          <td>projectId = 4; проект существует, колонки отсутствуют</td>
+          <td>Проект проверен, созданы стандартные колонки, возвращена структура board</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">syncBoardToTables()</td>
+          <td>Синхронизация новой доски с таблицами</td>
+          <td>Board с колонками todo/done и карточкой card-1</td>
+          <td>Созданы колонки, задача, рассчитаны поля планирования и записан task_created в журнал</td>
+        </tr>
+        <tr>
+          <td class="test-class">ProjectBoardServicesTest</td>
+          <td class="test-method">syncBoardToTables()</td>
+          <td>Удаление задач и колонок, отсутствующих во входящей доске</td>
+          <td>В БД есть колонка done и задача card-10, во входящем board их нет</td>
+          <td>Выполнено удаление отсутствующей задачи и колонки, оставшаяся колонка обновлена</td>
+        </tr>
+        <tr>
+          <td class="test-class">TaskUtilsTest</td>
+          <td class="test-method">normalizePriorityForStorage(), normalizePriorityForBoard()</td>
+          <td>Нормализация приоритета для хранения и отображения</td>
+          <td>normal, HIGH, unknown, low</td>
+          <td>Значения приведены к medium/high/medium и Low/Medium для доски</td>
+        </tr>
+        <tr>
+          <td class="test-class">TaskUtilsTest</td>
+          <td class="test-method">normalizeTags()</td>
+          <td>Очистка и ограничение списка тегов</td>
+          <td>Массив тегов с пробелами, пустыми значениями и более чем 20 элементами</td>
+          <td>Пустые значения удалены, строки обрезаны, итоговый список ограничен 20 тегами</td>
+        </tr>
+        <tr>
+          <td class="test-class">TaskUtilsTest</td>
+          <td class="test-method">parsePlanningPayload()</td>
+          <td>Проверка параметров планирования задачи</td>
+          <td>plannedDate = 2026-05-25, durationWeeks = 1, durationDays = 9; некорректная дата и отрицательная длительность</td>
+          <td>Корректные значения нормализованы в 2 недели и 2 дня; ошибки отклонены</td>
+        </tr>
+        <tr>
+          <td class="test-class">TaskUtilsTest</td>
+          <td class="test-method">getTaskComparableState(), taskStatesEqual()</td>
+          <td>Сравнение эквивалентных состояний задачи</td>
+          <td>Два объекта задачи с разным форматом, но одинаковым смысловым состоянием</td>
+          <td>Состояния нормализованы и считаются равными</td>
+        </tr>
+        <tr>
+          <td class="test-class">TaskUtilsTest</td>
+          <td class="test-method">parseEntityId()</td>
+          <td>Проверка допустимости идентификаторов</td>
+          <td>12, пустая строка, abc, -1</td>
+          <td>12 преобразуется в число, пустая строка дает null, некорректные значения отклоняются</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Детализация выполнения</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>Статус</th>
+          <th>Тест</th>
+          <th>Файл</th>
+          <th class="number">Время, мс</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Регистрация создает пользователя, записывает событие в журнал и возвращает JWT-токены</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">11.997</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Регистрация отклоняет занятое имя пользователя</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">0.495</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Вход в систему принимает корректные учетные данные и возвращает JWT-токены</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">4.116</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Вход в систему отклоняет отсутствующего пользователя и неверный пароль</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">3.059</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Смена пароля проверяет старый пароль и обновляет хэш пароля</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">5.645</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Смена пароля отклоняет неверный старый пароль</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">3.566</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Обновление access token выполняется только по корректному refresh token</td>
+          <td>test/auth-service.test.js</td>
+          <td class="number">0.71</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Проверка проекта возвращает найденный проект или ошибку 404</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">4.742</td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Стандартные колонки доски создаются только для пустого проекта</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">0.799</td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Расчет номера и позиции задачи учитывает максимальные значения</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">0.24</td>
+        </tr>
+        <tr>
+          <td>11</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Сборка доски преобразует колонки, карточки и задачи без колонки в структуру board</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">0.509</td>
+        </tr>
+        <tr>
+          <td>12</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Получение доски проверяет проект, создает стандартные колонки и возвращает board</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">0.258</td>
+        </tr>
+        <tr>
+          <td>13</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Синхронизация доски создает колонки, задачи и записи журнала активности</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">1.622</td>
+        </tr>
+        <tr>
+          <td>14</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Синхронизация доски удаляет отсутствующие во входных данных задачи и колонки</td>
+          <td>test/project-board-services.test.js</td>
+          <td class="number">0.406</td>
+        </tr>
+        <tr>
+          <td>15</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Нормализация приоритета корректно подготавливает значения для хранения и вывода на доске</td>
+          <td>test/task-utils.test.js</td>
+          <td class="number">2.31</td>
+        </tr>
+        <tr>
+          <td>16</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Нормализация тегов удаляет пустые значения и ограничивает размер списка</td>
+          <td>test/task-utils.test.js</td>
+          <td class="number">2.506</td>
+        </tr>
+        <tr>
+          <td>17</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Парсинг параметров планирования принимает корректные значения и отклоняет ошибки</td>
+          <td>test/task-utils.test.js</td>
+          <td class="number">0.686</td>
+        </tr>
+        <tr>
+          <td>18</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Формирование состояния задачи создает стабильную структуру для сравнения</td>
+          <td>test/task-utils.test.js</td>
+          <td class="number">0.213</td>
+        </tr>
+        <tr>
+          <td>19</td>
+          <td><span class="status status-pass">PASS</span></td>
+          <td>Парсинг идентификаторов принимает только положительные числовые значения</td>
+          <td>test/task-utils.test.js</td>
+          <td class="number">0.101</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="card conclusion">
+      Все проверенные модули прошли тестирование. Ошибок выполнения и нарушений ожидаемого поведения не выявлено.
+    </section>
+  </main>
+</body>
+</html>

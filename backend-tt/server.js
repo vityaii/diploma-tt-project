@@ -1,9 +1,9 @@
 const { ensureSchema } = require('./db/ensure-schema.js');
+const { startServer } = require('./bootstrap');
 
 async function start() {
   await ensureSchema();
-  // Основное API поднято в app.js
-  require('./app.js');
+  await startServer();
 }
 
 start().catch(err => {

@@ -1,29 +1,21 @@
 // auth.js
 const express = require('express');
-const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
 const { Pool } = require('pg');
 const { databaseUrlApp } = require('../config/config');
-const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('./jwt');
 const { requireAuth } = require('./require-auth');
+const {
+  registerUser,
+  loginUser,
+  changePassword,
+  refreshAccessToken,
+} = require('./auth-service');
 
 const router = express.Router();
-const saltRounds = 10;
 const fallbackPool = new Pool({ connectionString: databaseUrlApp });
 
 function getPool(req) {
   return req.app?.locals?.db || fallbackPool;
-}
-
-function buildAuthResponse(user) {
-  const accessToken = signAccessToken(user);
-  const refreshToken = signRefreshToken(user);
-  return {
-    userId: user.id,
-    username: user.username,
-    accessToken,
-    refreshToken,
-  };
 }
 
 // принимать JSON и form-urlencoded, чтобы не тянуть пароли через querystring
@@ -53,43 +45,17 @@ router.post(
 
       const { username, password } = req.body;
       const pool = getPool(req);
-
-      const exists = await pool.query(
-        'SELECT 1 FROM users WHERE username=$1',
-        [username]
-      );
-      if (exists.rowCount) {
-        return res.status(409).json({ message: 'Имя пользователя занято' });
-      }
-
-      const hash = await bcrypt.hash(password, saltRounds);
-      const { rows } = await pool.query(
-        'INSERT INTO users (username, password_hash) VALUES ($1,$2) RETURNING id, username',
-        [username, hash]
-      );
-
-      const newUser = rows[0]; // содержит id и username
-      await pool.query(
-        'INSERT INTO activity_log (event_type, actor_user_id, metadata) VALUES ($1, $2, $3::jsonb)',
-        [
-          'user_created',
-          newUser.id,
-          JSON.stringify({
-            actorUsername: newUser.username,
-            targetUsername: newUser.username,
-            targetUserId: newUser.id,
-          }),
-        ]
-      );
+      const authResponse = await registerUser(pool, { username, password });
       req.session.regenerate(err => {
         if (err) return next(err);
-        req.session.userId = newUser.id;
+        req.session.userId = authResponse.userId;
         req.session.save(saveErr => {
           if (saveErr) return next(saveErr);
-          res.status(201).json(buildAuthResponse(newUser));
+          res.status(201).json(authResponse);
         });
       });
     } catch (err) {
+      if (err.status) return res.status(err.status).json({ message: err.message });
       next(err);
     }
   }
@@ -111,28 +77,17 @@ router.post(
 
       const { username, password } = req.body;
       const pool = getPool(req);
-
-      const { rows } = await pool.query(
-        'SELECT id, username, password_hash FROM users WHERE username=$1',
-        [username]
-      );
-      if (
-        rows.length === 0 ||
-        !(await bcrypt.compare(password, rows[0].password_hash))
-      ) {
-        return res.status(401).json({ message: 'Неверные учётные данные' });
-      }
-
-      const user = rows[0];
+      const authResponse = await loginUser(pool, { username, password });
       req.session.regenerate(err => {
         if (err) return next(err);
-        req.session.userId = user.id;
+        req.session.userId = authResponse.userId;
         req.session.save(saveErr => {
           if (saveErr) return next(saveErr);
-          res.json(buildAuthResponse(user));
+          res.json(authResponse);
         });
       });
     } catch (err) {
+      if (err.status) return res.status(err.status).json({ message: err.message });
       next(err);
     }
   }
@@ -158,26 +113,9 @@ router.post(
       const { oldPassword, newPassword } = req.body;
       const userId = req.auth?.userId;
       const pool = getPool(req);
-
-      const { rows } = await pool.query(
-        'SELECT id, username, password_hash FROM users WHERE id=$1',
-        [userId]
-      );
-      if (
-        rows.length === 0 ||
-        !(await bcrypt.compare(oldPassword, rows[0].password_hash))
-      ) {
-        return res.status(401).json({ message: 'Неверные учётные данные' });
-      }
-
-      const newHash = await bcrypt.hash(newPassword, saltRounds);
-      await pool.query('UPDATE users SET password_hash=$1 WHERE id=$2', [
-        newHash,
-        rows[0].id,
-      ]);
-
-      res.json({ message: 'Пароль изменён' });
+      res.json(await changePassword(pool, userId, { oldPassword, newPassword }));
     } catch (err) {
+      if (err.status) return res.status(err.status).json({ message: err.message });
       next(err);
     }
   }
@@ -196,14 +134,9 @@ router.post(
     }
 
     try {
-      const payload = verifyRefreshToken(req.body.refreshToken);
-      const accessToken = signAccessToken({
-        id: payload.userId,
-        username: payload.username,
-      });
-      return res.json({ accessToken });
+      return res.json(refreshAccessToken(req.body.refreshToken));
     } catch (err) {
-      return res.status(401).json({ error: 'Invalid or expired refresh token' });
+      return res.status(err.status || 401).json({ error: err.message });
     }
   },
 );
