@@ -7,6 +7,7 @@ const reportsDir = path.join(rootDir, 'reports');
 const junitPath = path.join(reportsDir, 'junit.xml');
 const markdownPath = path.join(reportsDir, 'test-summary.md');
 const htmlPath = path.join(reportsDir, 'test-summary.html');
+const consolePath = path.join(reportsDir, 'test-console.txt');
 const TEST_NAME_TRANSLATIONS = {
   'registerUser creates a user, stores activity log and returns JWT tokens':
     'Регистрация создает пользователя, записывает событие в журнал и возвращает JWT-токены',
@@ -269,10 +270,70 @@ function parseJunit(xml) {
   };
 }
 
+function formatSeconds(durationMs) {
+  return `${(Number(durationMs || 0) / 1000).toFixed(3)}s`;
+}
+
+function getConsoleGroupTitle(file) {
+  const normalized = String(file || '').replace(/\//g, '\\');
+  if (normalized.endsWith('auth-service.test.js')) {
+    return 'Tests\\Unit\\Auth\\AuthServiceTest';
+  }
+  if (normalized.endsWith('project-board-services.test.js')) {
+    return 'Tests\\Unit\\Services\\ProjectBoardServicesTest';
+  }
+  if (normalized.endsWith('task-utils.test.js')) {
+    return 'Tests\\Unit\\Utils\\TaskUtilsTest';
+  }
+  return `Tests\\Unit\\${normalized}`;
+}
+
+function groupTestCasesByFile(cases) {
+  const groups = [];
+  const byFile = new Map();
+
+  for (const testCase of cases) {
+    if (!byFile.has(testCase.file)) {
+      const group = {
+        file: testCase.file,
+        title: getConsoleGroupTitle(testCase.file),
+        cases: [],
+      };
+      byFile.set(testCase.file, group);
+      groups.push(group);
+    }
+    byFile.get(testCase.file).cases.push(testCase);
+  }
+
+  return groups;
+}
+
+function buildConsoleReport(report) {
+  const lines = [];
+  const groups = groupTestCasesByFile(report.cases);
+  const status = report.failed === 0 && report.cancelled === 0 ? 'PASS' : 'FAIL';
+  const totalAssertions = report.tests;
+
+  for (const group of groups) {
+    lines.push(`${status}  ${group.title}`);
+    for (const testCase of group.cases) {
+      const marker = testCase.status === 'PASS' ? '✓' : '✕';
+      lines.push(`${marker} ${testCase.name.padEnd(96, ' ')} ${formatSeconds(testCase.durationMs)}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(`Tests:    ${report.passed} passed (${totalAssertions} assertions)`);
+  lines.push(`Duration: ${formatSeconds(report.durationMs)}`);
+  lines.push('');
+
+  return lines.join('\n');
+}
+
 function buildMarkdown(report) {
   const status = report.failed === 0 && report.cancelled === 0 ? 'PASSED' : 'FAILED';
   const rows = report.cases.map((testCase, index) => (
-    `| ${index + 1} | ${testCase.status} | ${testCase.name} | ${testCase.file} | ${testCase.durationMs} |`
+    `| ${index + 1} | ${testCase.status} | ${testCase.name} | ${testCase.file} | ${formatSeconds(testCase.durationMs)} |`
   ));
   const scenarioRows = report.cases.map((testCase) => {
     const details = testCase.details;
@@ -301,7 +362,7 @@ function buildMarkdown(report) {
     `| Пропущено | ${report.skipped} |`,
     `| Отменено | ${report.cancelled} |`,
     `| TODO | ${report.todo} |`,
-    `| Длительность, мс | ${report.durationMs} |`,
+    `| Длительность | ${formatSeconds(report.durationMs)} |`,
     '',
     '## Таблица тестовых сценариев',
     '',
@@ -311,7 +372,7 @@ function buildMarkdown(report) {
     '',
     '## Детализация',
     '',
-    '| № | Статус | Тест | Файл | Время, мс |',
+    '| № | Статус | Тест | Файл | Время выполнения |',
     '| ---: | --- | --- | --- | ---: |',
     ...rows,
     '',
@@ -333,7 +394,7 @@ function buildHtml(report) {
           <td><span class="status status-${testCase.status.toLowerCase()}">${testCase.status}</span></td>
           <td>${escapeHtml(testCase.name)}</td>
           <td>${escapeHtml(testCase.file)}</td>
-          <td class="number">${testCase.durationMs}</td>
+          <td class="number">${formatSeconds(testCase.durationMs)}</td>
         </tr>`).join('');
   const scenarioRows = report.cases.map((testCase) => {
     const details = testCase.details;
@@ -500,7 +561,7 @@ function buildHtml(report) {
       <div class="card">Всего тестов<strong>${report.tests}</strong></div>
       <div class="card">Успешно<strong>${report.passed}</strong></div>
       <div class="card">Ошибок<strong>${report.failed}</strong></div>
-      <div class="card">Длительность, мс<strong>${report.durationMs}</strong></div>
+      <div class="card">Длительность<strong>${formatSeconds(report.durationMs)}</strong></div>
     </section>
 
     <div class="muted">Доля успешно пройденных тестов: ${successRate}%</div>
@@ -529,7 +590,7 @@ function buildHtml(report) {
           <th>Статус</th>
           <th>Тест</th>
           <th>Файл</th>
-          <th class="number">Время, мс</th>
+          <th class="number">Время выполнения</th>
         </tr>
       </thead>
       <tbody>${rows}
@@ -555,30 +616,40 @@ function getTestFiles() {
 
 function runTests() {
   ensureReportsDir();
+  const printOnly = process.argv.includes('--print');
+  const destination = printOnly ? 'stdout' : junitPath;
   const result = spawnSync(process.execPath, [
     '--test',
     '--test-reporter=junit',
-    `--test-reporter-destination=${junitPath}`,
+    `--test-reporter-destination=${destination}`,
     ...getTestFiles(),
   ], {
     cwd: rootDir,
-    stdio: 'inherit',
+    encoding: 'utf8',
   });
 
-  if (!fs.existsSync(junitPath)) {
+  if (!printOnly && !fs.existsSync(junitPath)) {
     process.exitCode = result.status || 1;
     throw new Error(`JUnit report was not created: ${junitPath}`);
   }
 
-  const xml = fs.readFileSync(junitPath, 'utf8');
+  const xml = printOnly ? result.stdout : fs.readFileSync(junitPath, 'utf8');
   const report = parseJunit(xml);
-  fs.writeFileSync(markdownPath, buildMarkdown(report));
-  fs.writeFileSync(htmlPath, buildHtml(report));
+  const consoleReport = buildConsoleReport(report);
 
-  console.log(`\nTest artifacts created:`);
-  console.log(`- ${path.relative(rootDir, junitPath)}`);
-  console.log(`- ${path.relative(rootDir, markdownPath)}`);
-  console.log(`- ${path.relative(rootDir, htmlPath)}`);
+  if (printOnly) {
+    process.stdout.write(consoleReport);
+  } else {
+    fs.writeFileSync(markdownPath, buildMarkdown(report));
+    fs.writeFileSync(htmlPath, buildHtml(report));
+    fs.writeFileSync(consolePath, consoleReport);
+
+    console.log(`\nTest artifacts created:`);
+    console.log(`- ${path.relative(rootDir, junitPath)}`);
+    console.log(`- ${path.relative(rootDir, markdownPath)}`);
+    console.log(`- ${path.relative(rootDir, htmlPath)}`);
+    console.log(`- ${path.relative(rootDir, consolePath)}`);
+  }
 
   process.exitCode = result.status || 0;
 }

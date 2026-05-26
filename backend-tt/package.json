@@ -1,7 +1,13 @@
 {
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js",
+    "test": "npm run test:unit",
+    "test:unit": "node --test test/*.test.js",
+    "test:console": "node scripts/test-report.js --print",
+    "test:integration": "RUN_INTEGRATION=1 node --test test/integration/*.test.js",
+    "test:docker": "RUN_DOCKER=1 node --test test/docker/*.test.js",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:full": "npm run test:unit && npm run test:integration && npm run test:docker",
     "test:report": "node scripts/test-report.js"
   },
   "dependencies": {

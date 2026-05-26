@@ -56,7 +56,6 @@ services:
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     user: root
-    profiles: ["infra"]
     ports:
       - "8080:8080"
     volumes:

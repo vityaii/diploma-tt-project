@@ -142,7 +142,7 @@
     <header>
       <div>
         <h1>Отчет о модульном тестировании</h1>
-        <div class="muted">Дата формирования: 2026-05-25T19:28:13.348Z</div>
+        <div class="muted">Дата формирования: 2026-05-25T20:41:48.272Z</div>
       </div>
       <span class="status status-pass">PASSED</span>
     </header>
@@ -151,7 +151,7 @@
       <div class="card">Всего тестов<strong>19</strong></div>
       <div class="card">Успешно<strong>19</strong></div>
       <div class="card">Ошибок<strong>0</strong></div>
-      <div class="card">Длительность, мс<strong>329.471292</strong></div>
+      <div class="card">Длительность<strong>0.170s</strong></div>
     </section>
 
     <div class="muted">Доля успешно пройденных тестов: 100%</div>
@@ -313,7 +313,7 @@
           <th>Статус</th>
           <th>Тест</th>
           <th>Файл</th>
-          <th class="number">Время, мс</th>
+          <th class="number">Время выполнения</th>
         </tr>
       </thead>
       <tbody>
@@ -322,133 +322,133 @@
           <td><span class="status status-pass">PASS</span></td>
           <td>Регистрация создает пользователя, записывает событие в журнал и возвращает JWT-токены</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">11.997</td>
+          <td class="number">0.008s</td>
         </tr>
         <tr>
           <td>2</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Регистрация отклоняет занятое имя пользователя</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">0.495</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>3</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Вход в систему принимает корректные учетные данные и возвращает JWT-токены</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">4.116</td>
+          <td class="number">0.004s</td>
         </tr>
         <tr>
           <td>4</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Вход в систему отклоняет отсутствующего пользователя и неверный пароль</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">3.059</td>
+          <td class="number">0.003s</td>
         </tr>
         <tr>
           <td>5</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Смена пароля проверяет старый пароль и обновляет хэш пароля</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">5.645</td>
+          <td class="number">0.005s</td>
         </tr>
         <tr>
           <td>6</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Смена пароля отклоняет неверный старый пароль</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">3.566</td>
+          <td class="number">0.003s</td>
         </tr>
         <tr>
           <td>7</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Обновление access token выполняется только по корректному refresh token</td>
           <td>test/auth-service.test.js</td>
-          <td class="number">0.71</td>
+          <td class="number">0.001s</td>
         </tr>
         <tr>
           <td>8</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Проверка проекта возвращает найденный проект или ошибку 404</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">4.742</td>
+          <td class="number">0.002s</td>
         </tr>
         <tr>
           <td>9</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Стандартные колонки доски создаются только для пустого проекта</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">0.799</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>10</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Расчет номера и позиции задачи учитывает максимальные значения</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">0.24</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>11</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Сборка доски преобразует колонки, карточки и задачи без колонки в структуру board</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">0.509</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>12</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Получение доски проверяет проект, создает стандартные колонки и возвращает board</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">0.258</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>13</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Синхронизация доски создает колонки, задачи и записи журнала активности</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">1.622</td>
+          <td class="number">0.001s</td>
         </tr>
         <tr>
           <td>14</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Синхронизация доски удаляет отсутствующие во входных данных задачи и колонки</td>
           <td>test/project-board-services.test.js</td>
-          <td class="number">0.406</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>15</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Нормализация приоритета корректно подготавливает значения для хранения и вывода на доске</td>
           <td>test/task-utils.test.js</td>
-          <td class="number">2.31</td>
+          <td class="number">0.001s</td>
         </tr>
         <tr>
           <td>16</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Нормализация тегов удаляет пустые значения и ограничивает размер списка</td>
           <td>test/task-utils.test.js</td>
-          <td class="number">2.506</td>
+          <td class="number">0.001s</td>
         </tr>
         <tr>
           <td>17</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Парсинг параметров планирования принимает корректные значения и отклоняет ошибки</td>
           <td>test/task-utils.test.js</td>
-          <td class="number">0.686</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>18</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Формирование состояния задачи создает стабильную структуру для сравнения</td>
           <td>test/task-utils.test.js</td>
-          <td class="number">0.213</td>
+          <td class="number">0.000s</td>
         </tr>
         <tr>
           <td>19</td>
           <td><span class="status status-pass">PASS</span></td>
           <td>Парсинг идентификаторов принимает только положительные числовые значения</td>
           <td>test/task-utils.test.js</td>
-          <td class="number">0.101</td>
+          <td class="number">0.000s</td>
         </tr>
       </tbody>
     </table>

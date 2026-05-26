@@ -18,6 +18,10 @@ function getPool(req) {
   return req.app?.locals?.db || fallbackPool;
 }
 
+async function closeFallbackPool() {
+  await fallbackPool.end();
+}
+
 // принимать JSON и form-urlencoded, чтобы не тянуть пароли через querystring
 router.use(express.json());
 router.use(express.urlencoded({ extended: true }));
@@ -156,3 +160,4 @@ router.post('/logout', requireAuth, (req, res) => {
 });
 
 module.exports = router;
+module.exports.closeFallbackPool = closeFallbackPool;
