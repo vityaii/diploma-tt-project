@@ -10,7 +10,7 @@ export type KanbanCard = {
   priority: Priority;
   plannedDate?: string;
   durationWeeks: number;
-  durationDays: number;
+  durationDays: number; 
   assignee?: { name: string; initials: string };
 };
 

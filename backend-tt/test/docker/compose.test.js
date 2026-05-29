@@ -70,6 +70,6 @@ if (!shouldRun) {
     assertPortMapping(db, 5431, 5432);
     assertPortMapping(backend, 7070, 7070);
     assertPortMapping(frontend, 5173, 5173);
-    assertPortMapping(jenkins, 8080, 8080);
+    assertPortMapping(jenkins, 8081, 8080);
   });
 }
